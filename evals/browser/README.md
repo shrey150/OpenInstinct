@@ -80,6 +80,17 @@ not become benchmark blockers:
 pnpm bench:ab <baseline-ref> <candidate-ref> --suite all --label "semantic browser loop"
 ```
 
+To isolate browser-provider behavior on the exact same revision, pass that
+revision twice and set both provider arms explicitly:
+
+```sh
+pnpm bench:ab HEAD HEAD --baseline-browser-provider kernel --candidate-browser-provider browserbase --suite live --repetitions 5 --max-concurrency 5 --label "Kernel vs Browserbase"
+```
+
+Provider overrides must be supplied for both arms or neither arm. Each server
+receives its provider override independently; task definitions, model settings,
+database fixtures, and application code remain identical.
+
 Runs default to nine concurrent tasks per revision, so an A/B suite can execute
 up to 18 tasks at once. Real flows default to a 15-minute per-task timeout. Use
 `--task-timeout-minutes <n>` to change that budget, `--repetitions 3` for a less

@@ -18,6 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { getGatewayModel } from "@/db/services/settings";
 import { env } from "@/env";
+import { browserProvider } from "@/lib/browser-provider";
 import { googleWorkspaceTokenParams } from "@/lib/google-workspace";
 import { requireRequestScope } from "@/lib/request-scope";
 import { GoogleWorkspaceAction } from "./_components/google-workspace-action";
@@ -60,9 +61,9 @@ export default async function Page({ searchParams }: PageProps<"/">) {
         <div className="divide-y divide-border/50 border-y border-border/50">
           <ConnectorRow
             action={<Badge variant="success">Connected</Badge>}
-            description="Run isolated browsers in your Browserbase account."
+            description={`Run isolated browsers in your ${browserProvider === "browserbase" ? "Browserbase" : "Kernel"} account.`}
             icon={<CloudIcon />}
-            label="Browserbase browser"
+            label={`${browserProvider === "browserbase" ? "Browserbase" : "Kernel"} browser`}
           />
           <ConnectorRow
             action={
@@ -218,7 +219,7 @@ function channelAvailabilityMessage({
   return [
     browserReady
       ? "WebChat is ready."
-      : "BROWSERBASE_API_KEY is required to enable WebChat.",
+      : "A browser provider API key is required to enable WebChat.",
     linqConfigured && linqPhoneNumber
       ? `iMessage opens ${linqPhoneNumber}.`
       : linqConfigured

@@ -5,7 +5,7 @@ const requiredEnvironment = {
   BETTER_AUTH_URL: "https://example.com",
   BLOB_READ_WRITE_TOKEN: "vercel_blob_rw_test",
   DATABASE_URL: "postgresql://user:password@example.com/database",
-  BROWSERBASE_API_KEY: "test-browserbase-key",
+  KERNEL_API_KEY: "test-kernel-key",
   SECRET_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
 };
 
@@ -102,18 +102,19 @@ describe("environment", () => {
     expect(env.SECRET_ENCRYPTION_KEY).toBeUndefined();
   });
 
-  it.each(["DATABASE_URL", "BROWSERBASE_API_KEY"])(
-    "keeps %s required in local development",
-    async (name) => {
-      vi.stubEnv(name, "");
-      vi.stubEnv("NODE_ENV", "development");
-      vi.stubEnv("VERCEL_ENV", undefined);
+  it.each([
+    ["DATABASE_URL", "Invalid environment variables"],
+    [
+      "KERNEL_API_KEY",
+      "KERNEL_API_KEY is required when BROWSER_PROVIDER=kernel",
+    ],
+  ])("keeps %s required in local development", async (name, errorMessage) => {
+    vi.stubEnv(name, "");
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("VERCEL_ENV", undefined);
 
-      await expect(import("@/env")).rejects.toThrow(
-        "Invalid environment variables"
-      );
-    }
-  );
+    await expect(import("@/env")).rejects.toThrow(errorMessage);
+  });
 
   it.each([
     requiredEnvironment.SECRET_ENCRYPTION_KEY.slice(0, -1),
@@ -127,7 +128,10 @@ describe("environment", () => {
 
   it.each([
     ["DATABASE_URL", "Invalid environment variables"],
-    ["BROWSERBASE_API_KEY", "Invalid environment variables"],
+    [
+      "KERNEL_API_KEY",
+      "KERNEL_API_KEY is required when BROWSER_PROVIDER=kernel",
+    ],
   ])(
     "rejects a missing required %s value during import",
     async (name, errorMessage) => {
@@ -136,6 +140,35 @@ describe("environment", () => {
       await expect(import("@/env")).rejects.toThrow(errorMessage);
     }
   );
+
+  it("supports Browserbase without requiring a Kernel key", async () => {
+    vi.stubEnv("BROWSER_PROVIDER", "browserbase");
+    vi.stubEnv("BROWSERBASE_API_KEY", "test-browserbase-key");
+    vi.stubEnv("KERNEL_API_KEY", "");
+
+    const { env } = await import("@/env");
+
+    expect(env.BROWSER_PROVIDER).toBe("browserbase");
+    expect(env.BROWSERBASE_API_KEY).toBe("test-browserbase-key");
+    expect(env.KERNEL_API_KEY).toBeUndefined();
+  });
+
+  it("requires the Browserbase key when Browserbase is selected", async () => {
+    vi.stubEnv("BROWSER_PROVIDER", "browserbase");
+    vi.stubEnv("BROWSERBASE_API_KEY", "");
+
+    await expect(import("@/env")).rejects.toThrow(
+      "BROWSERBASE_API_KEY is required when BROWSER_PROVIDER=browserbase"
+    );
+  });
+
+  it("rejects an unknown browser provider", async () => {
+    vi.stubEnv("BROWSER_PROVIDER", "unknown");
+
+    await expect(import("@/env")).rejects.toThrow(
+      "Invalid environment variables"
+    );
+  });
 
   it("rejects an encryption key that does not decode to 32 bytes", async () => {
     vi.stubEnv("SECRET_ENCRYPTION_KEY", Buffer.alloc(31, 1).toString("base64"));

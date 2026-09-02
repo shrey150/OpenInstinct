@@ -1,7 +1,27 @@
 /* oxlint-disable typescript/no-unsafe-type-assertion, anti-slop/no-chained-type-assertions -- The page fixture implements the narrow frame-evaluation contract used by the masking helper. */
 import { describe, expect, it, vi } from "vitest";
 import type { Page } from "playwright-core";
-import { withVaultScreenshotMask } from "../vault-screenshot-mask";
+import {
+  withBrowserbaseVaultScreenshotMask,
+  withKernelVaultScreenshotMask,
+} from "../vault-screenshot-mask";
+
+const mocks = vi.hoisted(() => ({
+  execute:
+    vi.fn<
+      (
+        sessionId: string,
+        body: { readonly code: string; readonly timeout_sec: number },
+        options: { readonly signal?: AbortSignal }
+      ) => Promise<{ readonly success: boolean }>
+    >(),
+}));
+
+vi.mock("@/lib/kernel", () => ({
+  getKernel: () => ({
+    browsers: { playwright: { execute: mocks.execute } },
+  }),
+}));
 
 describe("Vault screenshot masking", () => {
   it("removes the mask after capture cancellation", async () => {
@@ -17,7 +37,7 @@ describe("Vault screenshot masking", () => {
     const page = { frames: () => [{ evaluate }] } as unknown as Page;
 
     await expect(
-      withVaultScreenshotMask(page, async () => {
+      withBrowserbaseVaultScreenshotMask(page, async () => {
         throw new Error("Capture cancelled");
       })
     ).rejects.toThrow("Capture cancelled");
@@ -39,12 +59,34 @@ describe("Vault screenshot masking", () => {
     // SAFETY: This fixture implements the sole Page method exercised by withVaultScreenshotMask.
     const page = { frames: () => [{ evaluate }] } as unknown as Page;
 
-    await withVaultScreenshotMask(page, async () => undefined);
+    await withBrowserbaseVaultScreenshotMask(page, async () => undefined);
 
     expect(evaluate.mock.calls.map((call) => call[1])).toEqual([
       expect.objectContaining({ action: "add" }),
       expect.objectContaining({ action: "remove" }),
     ]);
     expect(String(evaluate.mock.calls[0]?.[0])).toContain("vaultMaskRefs");
+  });
+
+  it("removes the Kernel mask with a fresh request after cancellation", async () => {
+    const controller = new AbortController();
+    mocks.execute.mockResolvedValue({ success: true });
+
+    await expect(
+      withKernelVaultScreenshotMask(
+        "browser-1",
+        controller.signal,
+        async () => {
+          controller.abort();
+          throw new Error("Capture cancelled");
+        }
+      )
+    ).rejects.toThrow("Capture cancelled");
+
+    expect(mocks.execute).toHaveBeenCalledTimes(2);
+    expect(mocks.execute.mock.calls[0]?.[2]).toEqual({
+      signal: controller.signal,
+    });
+    expect(mocks.execute.mock.calls[1]?.[2]).toEqual({ signal: undefined });
   });
 });

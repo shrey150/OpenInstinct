@@ -1,7 +1,9 @@
 import { recordBrowserTraceDomains } from "@/db/services/browser-traces";
 import { z } from "zod";
 import type { AccessScope } from "@/lib/access-scope";
-import { browserbase } from "@/lib/browserbase";
+import { browserProvider } from "@/lib/browser-provider";
+import { getBrowserbase } from "@/lib/browserbase";
+import { getKernel } from "@/lib/kernel";
 
 const maximumTelemetryEvents = 5000;
 
@@ -19,7 +21,17 @@ async function collectNavigationDomains(
   browser: { createdAt: string; sessionId: string },
   signal?: AbortSignal
 ) {
+  return browserProvider === "browserbase"
+    ? collectBrowserbaseNavigationDomains(browser, signal)
+    : collectKernelNavigationDomains(browser, signal);
+}
+
+async function collectBrowserbaseNavigationDomains(
+  browser: { createdAt: string; sessionId: string },
+  signal?: AbortSignal
+) {
   const domains = new Set<string>();
+  const browserbase = getBrowserbase();
   const logs = await browserbase.sessions.logs.list(browser.sessionId, {
     signal,
   });
@@ -50,6 +62,29 @@ async function collectNavigationDomains(
     .catch(() => undefined);
   for (const page of live?.pages ?? []) {
     const domain = domainFromUrl(page.url);
+    if (domain) domains.add(domain);
+  }
+  return domains;
+}
+
+async function collectKernelNavigationDomains(
+  browser: { createdAt: string; sessionId: string },
+  signal?: AbortSignal
+) {
+  const domains = new Set<string>();
+  let seen = 0;
+  for await (const { event } of getKernel().browsers.telemetry.events(
+    browser.sessionId,
+    { category: ["page"], limit: 1000, since: browser.createdAt },
+    { signal }
+  )) {
+    if (seen >= maximumTelemetryEvents) break;
+    seen += 1;
+    if (event.type !== "page_navigation") continue;
+    const data = event.data;
+    if (!data?.url || data.parent_frame_id) continue;
+    if (data.target_type && data.target_type !== "page") continue;
+    const domain = domainFromUrl(data.url);
     if (domain) domains.add(domain);
   }
   return domains;

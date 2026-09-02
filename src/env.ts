@@ -62,9 +62,11 @@ function installationSecretWithLocalDefault<
 export const env = createEnv({
   server: {
     // Required
-    BROWSERBASE_API_KEY: requiredValue,
+    BROWSER_PROVIDER: z.enum(["kernel", "browserbase"]).default("kernel"),
+    BROWSERBASE_API_KEY: requiredValue.optional(),
     BROWSERBASE_PROJECT_ID: requiredValue.optional(),
     DATABASE_URL: databaseUrlSchema,
+    KERNEL_API_KEY: requiredValue.optional(),
 
     // Optional overrides with local defaults. Vercel deployments provision
     // installation secrets in their connected private Blob store.
@@ -104,6 +106,21 @@ export const env = createEnv({
   experimental__runtimeEnv: {},
   emptyStringAsUndefined: true,
 });
+
+const selectedBrowserApiKey =
+  env.BROWSER_PROVIDER === "browserbase"
+    ? env.BROWSERBASE_API_KEY
+    : env.KERNEL_API_KEY;
+
+if (!selectedBrowserApiKey) {
+  const variable =
+    env.BROWSER_PROVIDER === "browserbase"
+      ? "BROWSERBASE_API_KEY"
+      : "KERNEL_API_KEY";
+  throw new Error(
+    `${variable} is required when BROWSER_PROVIDER=${env.BROWSER_PROVIDER}.`
+  );
+}
 
 const authHostname = env.BETTER_AUTH_URL
   ? new URL(env.BETTER_AUTH_URL).hostname

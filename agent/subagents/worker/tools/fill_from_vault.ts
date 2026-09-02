@@ -3,10 +3,12 @@ import { z } from "zod";
 import { requireOwnedBrowserSession } from "@/agent/subagents/worker/lib/owned-browser";
 import { requireWorkerScope } from "@/agent/subagents/worker/lib/access";
 import { readVaultItem } from "@/db/services/vault";
-import { browserbase } from "@/lib/browserbase";
+import { browserProvider } from "@/lib/browser-provider";
+import { getBrowserbase } from "@/lib/browserbase";
+import { getKernel } from "@/lib/kernel";
 import {
-  currentBrowserbasePageOrigin,
-  fillWithBrowserbaseNativeAutofill,
+  currentBrowserPageOrigin,
+  fillWithNativeAutofill,
   nativeAutofillTokens,
 } from "../lib/autofill/native";
 import { vaultAutofillProvider } from "../lib/autofill/provider";
@@ -46,18 +48,19 @@ export default defineTool({
       );
     }
     if (item.kind === "login") {
-      const browser = await browserbase.sessions.retrieve(
-        input.browserSessionId,
-        { signal: context.abortSignal }
-      );
-      if (browser.userMetadata?.openinstinctProfileWriter !== "true") {
+      if (
+        !(await browserPersistsChanges(
+          input.browserSessionId,
+          context.abortSignal
+        ))
+      ) {
         throw new Error(
           "Login autofill requires a browser created with save_changes: true. Delete this browser, create a writable browser at the same URL, then focus and fill again."
         );
       }
     }
 
-    const origin = await currentBrowserbasePageOrigin({
+    const origin = await currentBrowserPageOrigin({
       browserSessionId: input.browserSessionId,
       signal: context.abortSignal,
     });
@@ -86,7 +89,7 @@ export default defineTool({
       },
       vaultAutofillProvider
     );
-    const result = await fillWithBrowserbaseNativeAutofill({
+    const result = await fillWithNativeAutofill({
       browserSessionId: input.browserSessionId,
       claims,
       expectedOrigin: origin,
@@ -102,3 +105,21 @@ export default defineTool({
     };
   },
 });
+
+async function browserPersistsChanges(
+  browserSessionId: string,
+  signal: AbortSignal | undefined
+) {
+  if (browserProvider === "browserbase") {
+    const browser = await getBrowserbase().sessions.retrieve(browserSessionId, {
+      signal,
+    });
+    return browser.userMetadata?.openinstinctProfileWriter === "true";
+  }
+  const browser = await getKernel().browsers.retrieve(
+    browserSessionId,
+    {},
+    { signal }
+  );
+  return browser.profile_save_changes;
+}

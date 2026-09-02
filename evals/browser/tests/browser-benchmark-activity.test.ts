@@ -131,7 +131,7 @@ describe("browser benchmark live activity", () => {
     ).toEqual({ model: 4_000, playwright: 3_000, semantic: 3_000 });
   });
 
-  it("finds the Browserbase live browser stream from session creation", () => {
+  it("finds the provider live browser stream from session creation", () => {
     const event = {
       data: {
         result: {

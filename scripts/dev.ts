@@ -154,21 +154,40 @@ function childExitCode(child: ChildProcess) {
   });
 }
 
-function requireBrowserbaseApiKey() {
-  if (inheritedEnvironment.BROWSERBASE_API_KEY?.trim()) return;
+function requireBrowserProviderApiKey() {
+  const configuredProvider = inheritedEnvironment.BROWSER_PROVIDER?.trim();
+  const provider = configuredProvider?.length ? configuredProvider : "kernel";
+  if (provider !== "kernel" && provider !== "browserbase") {
+    throw new Error(
+      'BROWSER_PROVIDER must be either "kernel" or "browserbase".'
+    );
+  }
 
+  const variable =
+    provider === "browserbase" ? "BROWSERBASE_API_KEY" : "KERNEL_API_KEY";
+  if (inheritedEnvironment[variable]?.trim()) return;
+
+  const setup =
+    provider === "browserbase"
+      ? [
+          "For an existing linked Vercel project, run pnpm exec vercel integration add browserbase.",
+          "Otherwise create a key at https://www.browserbase.com/settings, set BROWSERBASE_API_KEY in .env.local, and run pnpm dev again.",
+        ]
+      : [
+          "For the simplest setup, use the Deploy with Vercel button in README.md; its Kernel Marketplace integration supplies the credentials automatically.",
+          "For an existing linked Vercel project, run pnpm exec vercel integration add kernel --plan FREE.",
+          "Otherwise create a key at https://kernel.sh, set KERNEL_API_KEY in .env.local, and run pnpm dev again.",
+        ];
   throw new Error(
     [
-      "BROWSERBASE_API_KEY is required for manual local development.",
-      "For the simplest setup, use the Deploy with Vercel button in README.md; its Browserbase Marketplace integration supplies the credentials automatically.",
-      "For an existing linked Vercel project, run pnpm exec vercel integration add browserbase.",
-      "Otherwise create a key at https://www.browserbase.com/settings, set BROWSERBASE_API_KEY in .env.local, and run pnpm dev again.",
+      `${variable} is required for manual local development when BROWSER_PROVIDER=${provider}.`,
+      ...setup,
     ].join("\n")
   );
 }
 
 try {
-  requireBrowserbaseApiKey();
+  requireBrowserProviderApiKey();
   composeAttempted = true;
   let shouldContinue = await run(
     "docker",

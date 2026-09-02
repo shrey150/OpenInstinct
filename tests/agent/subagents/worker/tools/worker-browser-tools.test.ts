@@ -44,7 +44,7 @@ vi.mock("@/lib/browserbase-playwright", () => ({
   withBrowserbasePage: mocks.withBrowserbasePage,
 }));
 
-import computerAction from "@/agent/subagents/worker/tools/computer_action";
+import computerAction from "@/agent/subagents/worker/browser-providers/browserbase/computer-action";
 
 beforeEach(() => {
   vi.clearAllMocks();

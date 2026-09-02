@@ -55,8 +55,8 @@ try {
     resolveCommit(options.candidateRef),
   ]);
   const variants = [
-    variant("baseline", baselineSha),
-    variant("candidate", candidateSha),
+    variant("baseline", baselineSha, options.baselineBrowserProvider),
+    variant("candidate", candidateSha, options.candidateBrowserProvider),
   ] as const;
   await archivePreviousLiveStatus();
   await writeBrowserBenchmarkLiveStatus(
@@ -97,14 +97,17 @@ try {
       current.databaseUrl = await startDatabase(current);
       await run("pnpm", ["db:migrate"], {
         cwd: current.path,
-        env: databaseEnvironment(current.databaseUrl),
+        env: databaseEnvironment(current.databaseUrl, current.browserProvider),
       });
       await run(
         join(repositoryRoot, "node_modules", ".bin", "tsx"),
         ["scripts/seed-browser-benchmark-vault.ts"],
         {
           cwd: current.path,
-          env: databaseEnvironment(current.databaseUrl),
+          env: databaseEnvironment(
+            current.databaseUrl,
+            current.browserProvider
+          ),
         }
       );
     })
@@ -146,8 +149,16 @@ try {
   }
 
   const manifest = {
-    baseline: { artifact: artifacts.baseline, gitSha: baselineSha },
-    candidate: { artifact: artifacts.candidate, gitSha: candidateSha },
+    baseline: {
+      artifact: artifacts.baseline,
+      browserProvider: options.baselineBrowserProvider,
+      gitSha: baselineSha,
+    },
+    candidate: {
+      artifact: artifacts.candidate,
+      browserProvider: options.candidateBrowserProvider,
+      gitSha: candidateSha,
+    },
     completedAt: new Date().toISOString(),
     label: options.label,
     repetitions: options.repetitions,
@@ -201,11 +212,16 @@ try {
   await cleanup();
 }
 
-function variant(kind: "baseline" | "candidate", sha: string) {
+function variant(
+  kind: "baseline" | "candidate",
+  sha: string,
+  browserProvider: "browserbase" | "kernel" | undefined
+) {
   const suffix = `${shortSha(sha)}-${String(process.pid)}`;
   const name = `eve-browser-${kind}-${suffix}`;
   return {
     databaseUrl: "",
+    browserProvider,
     kind,
     name,
     path: join(temporaryRoot, kind),
@@ -284,17 +300,18 @@ async function startDatabase(current: ReturnType<typeof variant>) {
 }
 
 async function startAgent(current: ReturnType<typeof variant>) {
+  const environment: NodeJS.ProcessEnv = {
+    ...databaseEnvironment(current.databaseUrl, current.browserProvider),
+    BETTER_AUTH_URL: current.url,
+    EVE_DEV: "1",
+    NODE_ENV: "development",
+  };
   const child = start(
     "portless",
     ["--name", current.name, "node_modules/eve/bin/eve.js", "dev", "--no-ui"],
     {
       cwd: current.path,
-      env: {
-        ...databaseEnvironment(current.databaseUrl),
-        BETTER_AUTH_URL: current.url,
-        EVE_DEV: "1",
-        NODE_ENV: "development",
-      },
+      env: environment,
     }
   );
   processes.push(child);
@@ -305,12 +322,29 @@ async function runBenchmark(current: ReturnType<typeof variant>) {
   const label = [
     options.label,
     current.kind,
+    current.browserProvider,
     shortSha(current.sha),
     options.suite,
   ]
     .filter(Boolean)
     .join("-");
   const artifact = join(outputDirectory, `${current.kind}.json`);
+  const environment: NodeJS.ProcessEnv = {
+    BROWSER_BENCH_ARTIFACT_PATH: artifact,
+    BROWSER_BENCH_LABEL: label,
+    BROWSER_BENCH_RUN_ID: timestamp,
+    BROWSER_BENCH_REPETITIONS: String(options.repetitions),
+    BROWSER_BENCH_STATUS_PATH: liveStatusPath,
+    BROWSER_BENCH_SUITE: options.suite,
+    BROWSER_BENCH_VARIANT: current.kind,
+    NODE_EXTRA_CA_CERTS:
+      inheritedEnvironment.NODE_EXTRA_CA_CERTS ??
+      join(homedir(), ".portless", "ca.pem"),
+    NODE_ENV: "development",
+  };
+  if (current.browserProvider) {
+    environment.BROWSER_PROVIDER = current.browserProvider;
+  }
   await run(
     "node_modules/eve/bin/eve.js",
     [
@@ -326,19 +360,7 @@ async function runBenchmark(current: ReturnType<typeof variant>) {
     ],
     {
       cwd: repositoryRoot,
-      env: {
-        BROWSER_BENCH_ARTIFACT_PATH: artifact,
-        BROWSER_BENCH_LABEL: label,
-        BROWSER_BENCH_RUN_ID: timestamp,
-        BROWSER_BENCH_REPETITIONS: String(options.repetitions),
-        BROWSER_BENCH_STATUS_PATH: liveStatusPath,
-        BROWSER_BENCH_SUITE: options.suite,
-        BROWSER_BENCH_VARIANT: current.kind,
-        NODE_EXTRA_CA_CERTS:
-          inheritedEnvironment.NODE_EXTRA_CA_CERTS ??
-          join(homedir(), ".portless", "ca.pem"),
-        NODE_ENV: "development",
-      },
+      env: environment,
       validExitCodes: [0, 1],
     }
   );
@@ -449,12 +471,17 @@ async function waitForUrl(url: string, child: ChildProcess) {
   throw new Error(`Timed out waiting for ${url}.`);
 }
 
-function databaseEnvironment(databaseUrl: string) {
-  return {
+function databaseEnvironment(
+  databaseUrl: string,
+  browserProvider?: "browserbase" | "kernel"
+) {
+  const environment: NodeJS.ProcessEnv = {
     DATABASE_URL: databaseUrl,
     DATABASE_URL_UNPOOLED: databaseUrl,
     NODE_ENV: "development" as const,
   };
+  if (browserProvider) environment.BROWSER_PROVIDER = browserProvider;
+  return environment;
 }
 
 function start(
@@ -566,6 +593,8 @@ function parseArguments(args: string[]) {
   let taskTimeoutMs = 15 * 60_000;
   let keep = false;
   let label: string | undefined;
+  let baselineBrowserProvider: "browserbase" | "kernel" | undefined;
+  let candidateBrowserProvider: "browserbase" | "kernel" | undefined;
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
@@ -585,6 +614,21 @@ function parseArguments(args: string[]) {
       const value = args[++index]?.trim();
       if (!value) throw new Error("--label requires a non-empty value.");
       label = value;
+      continue;
+    }
+    if (
+      argument === "--baseline-browser-provider" ||
+      argument === "--candidate-browser-provider"
+    ) {
+      const value = args[++index];
+      if (value !== "kernel" && value !== "browserbase") {
+        throw new Error(`${argument} must be kernel or browserbase.`);
+      }
+      if (argument === "--baseline-browser-provider") {
+        baselineBrowserProvider = value;
+      } else {
+        candidateBrowserProvider = value;
+      }
       continue;
     }
     if (argument === "--repetitions" || argument === "--max-concurrency") {
@@ -615,11 +659,21 @@ function parseArguments(args: string[]) {
   const [baselineRef, candidateRef] = positional;
   if (positional.length !== 2 || !baselineRef || !candidateRef) {
     throw new Error(
-      'Usage: pnpm bench:ab <baseline-ref> <candidate-ref> [--label "description"] [--suite smoke|live|all] [--repetitions n] [--max-concurrency n] [--task-timeout-minutes n] [--keep]'
+      'Usage: pnpm bench:ab <baseline-ref> <candidate-ref> [--baseline-browser-provider kernel|browserbase --candidate-browser-provider kernel|browserbase] [--label "description"] [--suite smoke|live|all] [--repetitions n] [--max-concurrency n] [--task-timeout-minutes n] [--keep]'
+    );
+  }
+  if (
+    (baselineBrowserProvider === undefined) !==
+    (candidateBrowserProvider === undefined)
+  ) {
+    throw new Error(
+      "Set both --baseline-browser-provider and --candidate-browser-provider, or neither."
     );
   }
   return {
+    baselineBrowserProvider,
     baselineRef,
+    candidateBrowserProvider,
     candidateRef,
     keep,
     label,

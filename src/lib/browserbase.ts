@@ -1,9 +1,19 @@
 import { Browserbase } from "@browserbasehq/sdk";
 import { env } from "@/env";
 
-export const browserbase = new Browserbase({
-  apiKey: env.BROWSERBASE_API_KEY,
-  maxRetries: 4,
-});
+let client: Browserbase | undefined;
 
-export const browserbaseProjectId = env.BROWSERBASE_PROJECT_ID;
+export function getBrowserbase() {
+  const apiKey = env.BROWSERBASE_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      "BROWSERBASE_API_KEY is required to use the Browserbase provider."
+    );
+  }
+  client ??= new Browserbase({ apiKey, maxRetries: 4 });
+  return client;
+}
+
+export function getBrowserbaseProjectId() {
+  return env.BROWSERBASE_PROJECT_ID;
+}

@@ -34,6 +34,7 @@ describe("root and worker capability boundaries", () => {
       "write_file.ts",
     ]);
     expect(existsSync(`${rootTools}/sendMessage.ts`)).toBe(false);
+    expect(existsSync("agent/extensions/kernel/extension.ts")).toBe(false);
     expect(existsSync("agent/extensions/browserbase/extension.ts")).toBe(false);
     expect(
       existsSync("agent/extensions/browserbase/connections/browser.ts")
@@ -114,33 +115,64 @@ describe("root and worker capability boundaries", () => {
         "disableTool()"
       );
     }
+    expect(existsSync(`${workerRoot}/extensions/kernel/extension.ts`)).toBe(
+      false
+    );
     expect(
       existsSync(`${workerRoot}/extensions/browserbase/extension.ts`)
     ).toBe(false);
     expect(readFileSync("package.json", "utf8")).not.toContain(
       "@browserbasehq/eve"
     );
-    for (const tool of [
+    const providerTools = [
       "capture_browser_image",
       "computer_action",
       "manage_browsers",
-    ]) {
+    ];
+    for (const tool of providerTools) {
       const source = readFileSync(`${workerTools}/${tool}.ts`, "utf8");
-      expect(source).toContain("defineTool(");
-      expect(source).not.toContain("defineDynamic(");
-      expect(source).toContain("requireWorkerScope(context)");
+      expect(source).toContain("selectBrowserProvider(");
     }
     expect(existsSync(`${workerRoot}/hooks/session-owner.ts`)).toBe(true);
     expect(existsSync(`${workerRoot}/skills/browser-execution/SKILL.md`)).toBe(
       false
     );
-    const semanticBrowser = readFileSync(
+    const semanticBrowserWrapper = readFileSync(
       `${workerTools}/semantic_browser.ts`,
       "utf8"
     );
-    expect(semanticBrowser).toContain("defineDynamic(");
-    expect(semanticBrowser).toContain("requireWorkerScope(context)");
-    expect(semanticBrowser).toContain('from "@/lib/browserbase-playwright"');
+    expect(semanticBrowserWrapper).toContain("selectBrowserProvider(");
+    const browserbaseProvider = `${workerRoot}/browser-providers/browserbase`;
+    const kernelProvider = `${workerRoot}/browser-providers/kernel`;
+    expect(toolFiles(browserbaseProvider)).toEqual([
+      "capture-browser-image.ts",
+      "computer-action.ts",
+      "manage-browsers.ts",
+      "semantic-browser.ts",
+    ]);
+    expect(toolFiles(kernelProvider)).toEqual([
+      "capture-browser-image.ts",
+      "computer-action.ts",
+      "manage-browsers.ts",
+      "semantic-browser.ts",
+      "semantic-loop.ts",
+    ]);
+    const browserbaseSemantic = readFileSync(
+      `${browserbaseProvider}/semantic-browser.ts`,
+      "utf8"
+    );
+    const kernelSemantic = readFileSync(
+      `${kernelProvider}/semantic-browser.ts`,
+      "utf8"
+    );
+    expect(browserbaseSemantic).toContain("defineDynamic(");
+    expect(browserbaseSemantic).toContain("requireWorkerScope(context)");
+    expect(browserbaseSemantic).toContain(
+      'from "@/lib/browserbase-playwright"'
+    );
+    expect(kernelSemantic).toContain("defineDynamic(");
+    expect(kernelSemantic).toContain("requireWorkerScope(context)");
+    expect(kernelSemantic).toContain('from "@onkernel/browser-loop"');
     const workerInstructions = readFileSync(
       `${workerRoot}/instructions.md`,
       "utf8"
@@ -156,10 +188,10 @@ describe("root and worker capability boundaries", () => {
       "Use `playwright_execute` as the primary browser execution surface"
     );
     expect(workerInstructions).toContain(
-      "Prefer one bounded structured selector plan per page state"
+      "Prefer one bounded selector-based operation per page state"
     );
-    expect(semanticBrowser).not.toContain("AsyncFunction");
-    expect(semanticBrowser).not.toContain("new Function");
+    expect(browserbaseSemantic).not.toContain("AsyncFunction");
+    expect(browserbaseSemantic).not.toContain("new Function");
     expect(workerInstructions).toContain(
       "`browser_act` dispatches actions and returns the successor state"
     );
@@ -167,18 +199,15 @@ describe("root and worker capability boundaries", () => {
     expect(existsSync(`${workerRoot}/lib/browser-runtime.ts`)).toBe(false);
     expect(existsSync(`${workerRoot}/lib/owned-browser.ts`)).toBe(true);
 
-    expect(readFileSync("src/lib/browserbase.ts", "utf8")).toContain(
-      "new Browserbase("
+    expect(readFileSync("src/lib/browser-provider.ts", "utf8")).toContain(
+      'provider === "browserbase"'
     );
-    for (const tool of [
-      "capture_browser_image",
-      "computer_action",
-      "manage_browsers",
-    ]) {
-      const source = readFileSync(`${workerTools}/${tool}.ts`, "utf8");
-      expect(source).toContain('from "@/lib/browserbase-playwright"');
-      expect(source).not.toContain("new Browserbase(");
-    }
+    expect(readFileSync("src/lib/browserbase.ts", "utf8")).toContain(
+      "client ??= new Browserbase("
+    );
+    expect(readFileSync("src/lib/kernel.ts", "utf8")).toContain(
+      "client ??= new Kernel("
+    );
     expect(readFileSync(`${workerTools}/fill_from_vault.ts`, "utf8")).toContain(
       'from "../lib/autofill/native"'
     );

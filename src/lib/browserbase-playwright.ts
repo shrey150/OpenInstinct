@@ -1,6 +1,6 @@
 import type { Browser, BrowserContext, Page } from "playwright-core";
 import { chromium } from "playwright-core";
-import { browserbase } from "@/lib/browserbase";
+import { getBrowserbase } from "@/lib/browserbase";
 
 const lockTailsBySession = new Map<string, Promise<void>>();
 
@@ -14,7 +14,9 @@ export async function withBrowserbasePage<T>(
   }) => Promise<T>
 ) {
   return withBrowserbaseSessionLock(sessionId, async () => {
-    const remote = await browserbase.sessions.retrieve(sessionId, { signal });
+    const remote = await getBrowserbase().sessions.retrieve(sessionId, {
+      signal,
+    });
     if (!remote.connectUrl || !isActiveBrowserbaseStatus(remote.status)) {
       throw new Error("Browserbase session is no longer active.");
     }

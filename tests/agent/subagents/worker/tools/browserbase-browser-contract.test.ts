@@ -24,7 +24,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/browserbase", () => ({
-  browserbase: {
+  getBrowserbase: () => ({
     contexts: {
       create: mocks.contextCreate,
       retrieve: mocks.contextRetrieve,
@@ -36,8 +36,8 @@ vi.mock("@/lib/browserbase", () => ({
       retrieve: mocks.retrieveBrowser,
       update: mocks.updateBrowser,
     },
-  },
-  browserbaseProjectId: undefined,
+  }),
+  getBrowserbaseProjectId: () => undefined,
 }));
 vi.mock("@/lib/browserbase-playwright", () => ({
   isActiveBrowserbaseStatus: (status: string) =>
@@ -66,7 +66,7 @@ vi.mock("@/agent/subagents/worker/lib/trace/domains", () => ({
 
 import manageBrowsers, {
   browserbaseContextKeyForWorkspace,
-} from "@/agent/subagents/worker/tools/manage_browsers";
+} from "@/agent/subagents/worker/browser-providers/browserbase/manage-browsers";
 
 type BrowserPageOperation = (resources: {
   page: {

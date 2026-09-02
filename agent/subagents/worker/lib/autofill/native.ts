@@ -1,5 +1,7 @@
 import { z } from "zod";
-import { browserbase } from "@/lib/browserbase";
+import { browserProvider } from "@/lib/browser-provider";
+import { getBrowserbase } from "@/lib/browserbase";
+import { getKernel } from "@/lib/kernel";
 import type { AutofillClaim } from "./protocol";
 import {
   classifyNativeLoginControl,
@@ -115,21 +117,21 @@ export const nativeAutofillTokens = {
 
 type NativeAutofillKind = "address" | "contact" | "login" | "payment";
 
-export async function currentBrowserbasePageOrigin({
+export async function currentBrowserPageOrigin({
   browserSessionId,
   signal,
 }: {
   readonly browserSessionId: string;
   readonly signal?: AbortSignal;
 }) {
-  return withBrowserbasePage(
+  return withBrowserPage(
     browserSessionId,
     signal,
     async ({ origin }) => origin
   );
 }
 
-export async function fillWithBrowserbaseNativeAutofill({
+export async function fillWithNativeAutofill({
   browserSessionId,
   claims,
   expectedOrigin,
@@ -145,7 +147,7 @@ export async function fillWithBrowserbaseNativeAutofill({
   const payload =
     kind === "login" ? undefined : buildNativeAutofillPayload(kind, claims);
 
-  return withBrowserbasePage(
+  return withBrowserPage(
     browserSessionId,
     signal,
     async ({ connection, origin, sessionId }) => {
@@ -532,7 +534,28 @@ async function markNativeAutofilledControls(
   }
 }
 
-async function withBrowserbasePage<T>(
+async function browserCdpUrl(
+  browserSessionId: string,
+  signal: AbortSignal | undefined
+) {
+  if (browserProvider === "browserbase") {
+    const browser = await getBrowserbase().sessions.retrieve(browserSessionId, {
+      signal,
+    });
+    if (!browser.connectUrl) {
+      throw new Error("The Browserbase session is no longer connectable.");
+    }
+    return browser.connectUrl;
+  }
+  const browser = await getKernel().browsers.retrieve(
+    browserSessionId,
+    {},
+    { signal }
+  );
+  return browser.cdp_ws_url;
+}
+
+async function withBrowserPage<T>(
   browserSessionId: string,
   signal: AbortSignal | undefined,
   operation: (page: {
@@ -541,13 +564,8 @@ async function withBrowserbasePage<T>(
     readonly sessionId: readonly string[];
   }) => Promise<T>
 ) {
-  const browser = await browserbase.sessions.retrieve(browserSessionId, {
-    signal,
-  });
-  if (!browser.connectUrl) {
-    throw new Error("The Browserbase session is no longer connectable.");
-  }
-  const connection = await CdpConnection.connect(browser.connectUrl, signal);
+  const cdpUrl = await browserCdpUrl(browserSessionId, signal);
+  const connection = await CdpConnection.connect(cdpUrl, signal);
 
   try {
     const { targetInfos } = targetListSchema.parse(
@@ -627,7 +645,7 @@ class CdpConnection {
       this.#onMessage(event);
     });
     socket.addEventListener("close", () => {
-      this.#rejectPending(new Error("The Browserbase CDP connection closed."));
+      this.#rejectPending(new Error("The browser CDP connection closed."));
     });
     signal?.addEventListener(
       "abort",
@@ -652,9 +670,7 @@ class CdpConnection {
       };
       const onError = () => {
         cleanup();
-        reject(
-          new Error("Could not connect to the Browserbase browser over CDP.")
-        );
+        reject(new Error("Could not connect to the browser over CDP."));
       };
       const onAbort = () => {
         cleanup();

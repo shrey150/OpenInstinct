@@ -53,7 +53,7 @@ vi.mock("@/agent/subagents/worker/lib/owned-browser", () => ({
   requireOwnedBrowserSession: mocks.requireOwnedBrowserSession,
 }));
 vi.mock("@/agent/subagents/worker/lib/vault-screenshot-mask", () => ({
-  withVaultScreenshotMask: mocks.mask,
+  withBrowserbaseVaultScreenshotMask: mocks.mask,
 }));
 vi.mock("@/lib/browserbase-playwright", () => ({
   withBrowserbasePage: mocks.withBrowserbasePage,
@@ -64,7 +64,7 @@ vi.mock("@/db/services/browser-images", () => ({
 }));
 vi.mock("@vercel/blob", () => ({ del: mocks.del, put: mocks.put }));
 
-import captureBrowserImage from "@/agent/subagents/worker/tools/capture_browser_image";
+import captureBrowserImage from "@/agent/subagents/worker/browser-providers/browserbase/capture-browser-image";
 
 const scope = { userId: "user-1", workspaceId: "workspace-1" };
 const reservation = {
