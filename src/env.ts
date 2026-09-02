@@ -62,8 +62,9 @@ function installationSecretWithLocalDefault<
 export const env = createEnv({
   server: {
     // Required
+    BROWSERBASE_API_KEY: requiredValue,
+    BROWSERBASE_PROJECT_ID: requiredValue.optional(),
     DATABASE_URL: databaseUrlSchema,
-    KERNEL_API_KEY: requiredValue,
 
     // Optional overrides with local defaults. Vercel deployments provision
     // installation secrets in their connected private Blob store.

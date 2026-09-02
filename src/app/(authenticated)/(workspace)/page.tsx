@@ -60,9 +60,9 @@ export default async function Page({ searchParams }: PageProps<"/">) {
         <div className="divide-y divide-border/50 border-y border-border/50">
           <ConnectorRow
             action={<Badge variant="success">Connected</Badge>}
-            description="Run isolated browsers in your Kernel account."
+            description="Run isolated browsers in your Browserbase account."
             icon={<CloudIcon />}
-            label="Kernel browser"
+            label="Browserbase browser"
           />
           <ConnectorRow
             action={
@@ -218,7 +218,7 @@ function channelAvailabilityMessage({
   return [
     browserReady
       ? "WebChat is ready."
-      : "KERNEL_API_KEY is required to enable WebChat.",
+      : "BROWSERBASE_API_KEY is required to enable WebChat.",
     linqConfigured && linqPhoneNumber
       ? `iMessage opens ${linqPhoneNumber}.`
       : linqConfigured

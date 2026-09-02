@@ -4,7 +4,7 @@ import { taskCompletionSchema } from "@/lib/worker-completion";
 
 export default defineDynamic({
   build: {
-    externalDependencies: ["@onkernel/browser-loop"],
+    externalDependencies: ["@browserbasehq/sdk", "playwright-core"],
   },
   events: {
     "turn.started": (_event, context) => {

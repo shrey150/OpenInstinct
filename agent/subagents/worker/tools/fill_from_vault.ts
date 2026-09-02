@@ -3,10 +3,10 @@ import { z } from "zod";
 import { requireOwnedBrowserSession } from "@/agent/subagents/worker/lib/owned-browser";
 import { requireWorkerScope } from "@/agent/subagents/worker/lib/access";
 import { readVaultItem } from "@/db/services/vault";
-import { kernel } from "@/lib/kernel";
+import { browserbase } from "@/lib/browserbase";
 import {
-  currentKernelPageOrigin,
-  fillWithKernelNativeAutofill,
+  currentBrowserbasePageOrigin,
+  fillWithBrowserbaseNativeAutofill,
   nativeAutofillTokens,
 } from "../lib/autofill/native";
 import { vaultAutofillProvider } from "../lib/autofill/provider";
@@ -46,19 +46,18 @@ export default defineTool({
       );
     }
     if (item.kind === "login") {
-      const browser = await kernel.browsers.retrieve(
+      const browser = await browserbase.sessions.retrieve(
         input.browserSessionId,
-        {},
         { signal: context.abortSignal }
       );
-      if (!browser.profile_save_changes) {
+      if (browser.userMetadata?.openinstinctProfileWriter !== "true") {
         throw new Error(
           "Login autofill requires a browser created with save_changes: true. Delete this browser, create a writable browser at the same URL, then focus and fill again."
         );
       }
     }
 
-    const origin = await currentKernelPageOrigin({
+    const origin = await currentBrowserbasePageOrigin({
       browserSessionId: input.browserSessionId,
       signal: context.abortSignal,
     });
@@ -87,7 +86,7 @@ export default defineTool({
       },
       vaultAutofillProvider
     );
-    const result = await fillWithKernelNativeAutofill({
+    const result = await fillWithBrowserbaseNativeAutofill({
       browserSessionId: input.browserSessionId,
       claims,
       expectedOrigin: origin,

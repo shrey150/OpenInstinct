@@ -162,7 +162,7 @@ export function ChromeImportPanel({ onDone }: { readonly onDone: () => void }) {
             <ShieldCheckIcon />
             <AlertTitle>Your passwords stay in your vault</AlertTitle>
             <AlertDescription>
-              The CSV is read in this browser and is not copied to Kernel.
+              The CSV is read in this browser and is not copied to Browserbase.
               Chrome exports passwords as plain text, so delete the file after
               this import.
             </AlertDescription>

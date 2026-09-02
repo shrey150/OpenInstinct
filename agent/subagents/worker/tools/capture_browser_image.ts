@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { del, put } from "@vercel/blob";
 import { defineTool, toolOutput } from "eve/tools";
 import { z } from "zod";
@@ -16,7 +16,7 @@ import {
   sniffBrowserImageMediaType,
 } from "@/lib/browser-artifact";
 import { env } from "@/env";
-import { kernel } from "@/lib/kernel";
+import { withBrowserbasePage } from "@/lib/browserbase-playwright";
 
 const regionSchema = z.object({
   height: z.number().int().positive(),
@@ -103,162 +103,96 @@ async function captureBrowserImage(
   input: CaptureInput,
   signal?: AbortSignal
 ): Promise<{ bytes: Uint8Array; sourceKind: CaptureInput["source"] }> {
-  switch (input.source) {
-    case "viewport": {
-      const response = await withVaultScreenshotMask(
-        input.session_id,
-        signal,
-        async () =>
-          kernel.browsers.computer.captureScreenshot(
-            input.session_id,
-            input.region ? { region: input.region } : undefined,
-            { signal }
-          )
-      );
-      return {
-        bytes: await readBoundedResponse(response),
-        sourceKind: input.source,
-      };
-    }
-    case "full_page":
-      return {
-        bytes: await capturePlaywrightScreenshot(
-          input.session_id,
-          { kind: "full_page" },
-          signal
-        ),
-        sourceKind: input.source,
-      };
-    case "element":
-      return {
-        bytes: await capturePlaywrightScreenshot(
-          input.session_id,
-          { kind: "element", selector: input.selector },
-          signal
-        ),
-        sourceKind: input.source,
-      };
-    case "image_resource":
-      try {
-        return {
-          bytes: await captureImageResource(
-            input.session_id,
-            input.selector,
-            signal
-          ),
-          sourceKind: input.source,
-        };
-      } catch (error) {
-        if (signal?.aborted) throw error;
-        return {
-          bytes: await capturePlaywrightScreenshot(
-            input.session_id,
-            { kind: "element", selector: input.selector },
-            signal
-          ),
-          sourceKind: "element",
-        };
-      }
-  }
-  throw new Error("Unsupported browser image source.");
-}
-
-async function captureImageResource(
-  sessionId: string,
-  selector: string,
-  signal?: AbortSignal
-) {
-  const result = await kernel.browsers.playwright.execute(
-    sessionId,
-    {
-      code: `
-const image = page.locator(${JSON.stringify(selector)}).first();
-await image.waitFor({ state: "visible", timeout: 5_000 });
-return await image.evaluate((element) => {
-  if (!(element instanceof HTMLImageElement)) {
-    throw new Error("The selected element is not an image.");
-  }
-  return { url: element.currentSrc || element.src };
-});`,
-      timeout_sec: 10,
-    },
-    { signal }
-  );
-  const resolved = z
-    .object({ url: z.url() })
-    .safeParse(result.success ? result.result : undefined);
-  if (!resolved.success) {
-    throw new Error(
-      result.error ?? "The selected image resource was unavailable."
-    );
-  }
-  const url = new URL(resolved.data.url);
-  if (url.protocol !== "https:" && url.protocol !== "http:") {
-    throw new Error("The selected image does not use an HTTP URL.");
-  }
-
-  await kernel.browsers.retrieve(sessionId, {}, { signal });
-  const response = await kernel.browsers.fetch(sessionId, url, {
-    headers: {
-      accept: "image/webp,image/png,image/jpeg,image/gif,*/*;q=0.1",
-    },
-    method: "GET",
+  return withBrowserbasePage(
+    input.session_id,
     signal,
-    timeout_ms: 20_000,
-  });
-  if (!response.ok) {
-    throw new Error(
-      `The selected image resource returned HTTP ${String(response.status)}.`
-    );
-  }
-  const bytes = await readBoundedResponse(response);
-  if (!sniffBrowserImageMediaType(bytes)) {
-    throw new Error("The selected resource is not a supported image.");
-  }
-  return bytes;
-}
-
-async function capturePlaywrightScreenshot(
-  sessionId: string,
-  target:
-    | { readonly kind: "full_page" }
-    | { readonly kind: "element"; readonly selector: string },
-  signal?: AbortSignal
-) {
-  const operationKey = randomUUID();
-  const remotePath = `/tmp/openinstinct-browser-image-${operationKey}.png`;
-
-  return withVaultScreenshotMask(sessionId, signal, async () => {
-    try {
-      const screenshotCode =
-        target.kind === "full_page"
-          ? `await page.screenshot({ animations: "disabled", caret: "hide", fullPage: true, path: ${JSON.stringify(remotePath)}, type: "png" });`
-          : `
-const target = page.locator(${JSON.stringify(target.selector)}).first();
-await target.waitFor({ state: "visible", timeout: 5_000 });
-await target.screenshot({ animations: "disabled", caret: "hide", path: ${JSON.stringify(remotePath)}, type: "png" });`;
-      const result = await kernel.browsers.playwright.execute(
-        sessionId,
-        { code: `${screenshotCode}\nreturn true;`, timeout_sec: 25 },
-        { signal }
-      );
-      if (!result.success) {
-        throw new Error(
-          result.error ?? "Kernel could not capture the screenshot."
-        );
+    async ({ context, page }) => {
+      switch (input.source) {
+        case "viewport": {
+          const bytes = await withVaultScreenshotMask(page, () =>
+            page.screenshot({
+              animations: "disabled",
+              caret: "hide",
+              clip: input.region,
+              type: "png",
+            })
+          );
+          return { bytes, sourceKind: input.source };
+        }
+        case "full_page": {
+          const bytes = await withVaultScreenshotMask(page, () =>
+            page.screenshot({
+              animations: "disabled",
+              caret: "hide",
+              fullPage: true,
+              type: "png",
+            })
+          );
+          return { bytes, sourceKind: input.source };
+        }
+        case "element": {
+          const bytes = await withVaultScreenshotMask(page, async () => {
+            const target = page.locator(input.selector).first();
+            await target.waitFor({ state: "visible", timeout: 5_000 });
+            return target.screenshot({
+              animations: "disabled",
+              caret: "hide",
+              type: "png",
+            });
+          });
+          return { bytes, sourceKind: input.source };
+        }
+        case "image_resource": {
+          const target = page.locator(input.selector).first();
+          try {
+            await target.waitFor({ state: "visible", timeout: 5_000 });
+            const resolved = await target.evaluate((element) => {
+              if (!(element instanceof HTMLImageElement)) {
+                throw new Error("The selected element is not an image.");
+              }
+              return element.currentSrc || element.src;
+            });
+            const url = new URL(resolved);
+            if (url.protocol !== "https:" && url.protocol !== "http:") {
+              throw new Error("The selected image does not use an HTTP URL.");
+            }
+            const response = await context.request.get(url.href, {
+              headers: {
+                accept: "image/webp,image/png,image/jpeg,image/gif,*/*;q=0.1",
+              },
+              timeout: 20_000,
+            });
+            if (!response.ok()) {
+              throw new Error(
+                `The selected image resource returned HTTP ${String(response.status())}.`
+              );
+            }
+            const bytes = await response.body();
+            if (bytes.byteLength > maximumBrowserImageBytes) {
+              throw new Error("The browser image exceeds the maximum size.");
+            }
+            if (!sniffBrowserImageMediaType(bytes)) {
+              throw new Error(
+                "The selected resource is not a supported image."
+              );
+            }
+            return { bytes, sourceKind: input.source };
+          } catch (error) {
+            if (signal?.aborted) throw error;
+            const bytes = await withVaultScreenshotMask(page, () =>
+              target.screenshot({
+                animations: "disabled",
+                caret: "hide",
+                type: "png",
+              })
+            );
+            return { bytes, sourceKind: "element" };
+          }
+        }
       }
-      const response = await kernel.browsers.fs.readFile(
-        sessionId,
-        { path: remotePath },
-        { signal }
-      );
-      return await readBoundedResponse(response);
-    } finally {
-      await kernel.browsers.fs
-        .deleteFile(sessionId, { path: remotePath })
-        .catch(() => undefined);
+      throw new Error("Unsupported browser image source.");
     }
-  });
+  );
 }
 
 function safeBrowserImageFilename(
@@ -328,41 +262,4 @@ async function persistCapturedImage(
     await del(storagePathname).catch(() => undefined);
     throw error;
   }
-}
-
-async function readBoundedResponse(response: Response) {
-  const contentLength = Number(response.headers.get("content-length"));
-  if (
-    Number.isFinite(contentLength) &&
-    contentLength > maximumBrowserImageBytes
-  ) {
-    throw new Error("The browser image exceeds the maximum size.");
-  }
-  if (!response.body) throw new Error("The browser image response is empty.");
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  try {
-    /* oxlint-disable eslint/no-await-in-loop -- A response body is an ordered stream and must be read and cancelled sequentially. */
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.byteLength;
-      if (total > maximumBrowserImageBytes) {
-        await reader.cancel();
-        throw new Error("The browser image exceeds the maximum size.");
-      }
-      chunks.push(value);
-    }
-    /* oxlint-enable eslint/no-await-in-loop */
-  } finally {
-    reader.releaseLock();
-  }
-  const bytes = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return bytes;
 }

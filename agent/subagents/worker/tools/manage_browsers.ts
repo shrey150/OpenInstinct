@@ -1,10 +1,8 @@
 import { createHash } from "node:crypto";
-import { ConflictError, NotFoundError } from "@onkernel/sdk";
 import type {
-  BrowserCreateResponse,
-  BrowserRetrieveResponse,
-  BrowserUpdateResponse,
-} from "@onkernel/sdk/resources/browsers";
+  Session,
+  SessionRetrieveResponse,
+} from "@browserbasehq/sdk/resources/sessions/sessions";
 import { defineTool } from "eve/tools";
 import { z } from "zod";
 import {
@@ -14,9 +12,12 @@ import {
   withBrowserProfileWriteLock,
 } from "@/db/services/browsers";
 import { recordBrowserTraceDomains } from "@/db/services/browser-traces";
-import { kernel } from "@/lib/kernel";
+import { browserbase, browserbaseProjectId } from "@/lib/browserbase";
+import {
+  isActiveBrowserbaseStatus,
+  withBrowserbasePage,
+} from "@/lib/browserbase-playwright";
 import { requireWorkerScope } from "@/agent/subagents/worker/lib/access";
-import { disposeBrowserLoopSession } from "../lib/semantic-loop";
 import { requireOwnedBrowserSession } from "@/agent/subagents/worker/lib/owned-browser";
 import {
   domainFromUrl,
@@ -24,6 +25,8 @@ import {
 } from "@/agent/subagents/worker/lib/trace/domains";
 
 const browserTimeoutFloorSeconds = 15 * 60;
+const browserTimeoutMaximumSeconds = 6 * 60 * 60;
+const workspaceContextPromises = new Map<string, Promise<string>>();
 
 const inputSchema = z.object({
   action: z.enum(["create", "update", "list", "get", "delete"]),
@@ -34,7 +37,7 @@ const inputSchema = z.object({
     .number()
     .int()
     .min(browserTimeoutFloorSeconds)
-    .max(259_200)
+    .max(browserTimeoutMaximumSeconds)
     .optional(),
   viewport_width: z.number().int().min(1).optional(),
   viewport_height: z.number().int().min(1).optional(),
@@ -45,7 +48,7 @@ const inputSchema = z.object({
 
 const manageBrowsers = defineTool({
   description:
-    'Manage browser sessions backed by the workspace persistent profile. Create read-only browsers by default so tasks can run in parallel. Immediately before a login, replace that task browser with one created using save_changes: true, then delete it after authentication so the session is saved. Only one profile writer may be active. Use "list" or "get" to inspect sessions.',
+    'Manage Browserbase Verified sessions backed by the workspace persistent context. Sessions use managed residential proxies and CAPTCHA solving. Browserbase controls the viewport as part of the Verified fingerprint, so viewport hints are accepted for compatibility but ignored. Create read-only browsers by default so tasks can run in parallel. Immediately before a login, replace that task browser with one created using save_changes: true, then delete it after authentication so the context is saved. Only one context writer may be active. Use "list" or "get" to inspect sessions.',
   inputSchema,
   async execute(input, context) {
     const scope = await requireWorkerScope(context);
@@ -54,51 +57,90 @@ const manageBrowsers = defineTool({
     switch (input.action) {
       case "create": {
         const create = async () => {
-          const profile = await ensureWorkspaceProfile(
+          const contextId = await ensureWorkspaceContext(
             scope.workspaceId,
             signal
           );
           if (input.save_changes) {
-            const activeWriter = await findActiveProfileWriter(
-              profile.id,
-              signal
-            );
+            const activeWriter = await findActiveContextWriter(scope, signal);
             if (activeWriter) {
               throw new Error(
-                `Browser session ${activeWriter.session_id} is already saving login state for this workspace. Retry after it finishes.`
+                `Browser session ${activeWriter.id} is already saving login state for this workspace. Retry after it finishes.`
               );
             }
           }
-          const browser = await kernel.browsers.create(
+
+          // Validate paired viewport hints for contract compatibility, but do
+          // not apply them: Browserbase Verified owns the viewport as part of
+          // its fingerprint.
+          browserViewport(input);
+          const browser = await browserbase.sessions.create(
             {
-              profile: {
-                id: profile.id,
-                save_changes: input.save_changes ?? false,
+              api_timeout: input.timeout_seconds ?? browserTimeoutFloorSeconds,
+              browserSettings: {
+                blockAds: false,
+                context: {
+                  id: contextId,
+                  persist: input.save_changes ?? false,
+                },
+                logSession: true,
+                recordSession: true,
+                solveCaptchas: true,
+                verified: true,
+                // Verified sessions use a Browserbase-managed viewport as part
+                // of their fingerprint. Passing a custom viewport weakens that
+                // identity and is intentionally avoided.
               },
-              start_url: input.start_url,
-              stealth: true,
-              telemetry: {
-                browser: { page: { enabled: true } },
-                enabled: true,
+              keepAlive: true,
+              projectId: browserbaseProjectId,
+              proxies: [
+                {
+                  geolocation: {
+                    city: "New York",
+                    country: "US",
+                    state: "NY",
+                  },
+                  type: "browserbase",
+                },
+              ],
+              region: "us-east-1",
+              userMetadata: {
+                openinstinctContext: browserbaseContextKeyForWorkspace(
+                  scope.workspaceId
+                ),
+                openinstinctProfileWriter: String(input.save_changes ?? false),
+                provider: "browserbase",
               },
-              timeout_seconds:
-                input.timeout_seconds ?? browserTimeoutFloorSeconds,
-              viewport: browserViewport(input),
             },
             { maxRetries: 8, signal }
           );
+
           try {
+            const startUrl = input.start_url;
+            if (startUrl) {
+              await withBrowserbasePage(
+                browser.id,
+                signal,
+                async ({ page }) => {
+                  await page.goto(startUrl, {
+                    timeout: 45_000,
+                    waitUntil: "domcontentloaded",
+                  });
+                }
+              );
+            }
             await createBrowserSession(scope, {
-              createdAt: browser.created_at,
-              sessionId: browser.session_id,
+              createdAt: browser.createdAt,
+              sessionId: browser.id,
               workerSessionId: context.session.id,
             });
           } catch (error) {
-            await kernel.browsers
-              .deleteByID(browser.session_id, { signal })
-              .catch(() => undefined);
+            await releaseBrowserbaseSession(browser.id, signal).catch(
+              () => undefined
+            );
             throw error;
           }
+
           const startDomain = input.start_url
             ? domainFromUrl(input.start_url)
             : undefined;
@@ -107,7 +149,7 @@ const manageBrowsers = defineTool({
               startDomain,
             ]).catch(() => undefined);
           }
-          return lifecycleResult(browser);
+          return lifecycleResult(await browserDescriptor(browser, signal));
         };
         return input.save_changes
           ? withBrowserProfileWriteLock(scope, create)
@@ -115,16 +157,13 @@ const manageBrowsers = defineTool({
       }
       case "list": {
         const records = await listBrowserSessions(scope);
-        const includeDeleted = input.status !== "active";
         const browsers = await Promise.all(
           records.map(async ({ sessionId }) => {
             try {
-              const browser = await kernel.browsers.retrieve(
-                sessionId,
-                { include_deleted: includeDeleted },
-                { signal }
-              );
-              const value = browserDescriptor(browser);
+              const browser = await browserbase.sessions.retrieve(sessionId, {
+                signal,
+              });
+              const value = await browserDescriptor(browser, signal);
               if (input.status === "deleted" && value.status !== "deleted") {
                 return null;
               }
@@ -154,17 +193,20 @@ const manageBrowsers = defineTool({
         const sessionId = requireSessionId(input.session_id);
         await requireOwnedBrowserSession(scope, sessionId);
         return browserDescriptor(
-          await retrieveBrowser(scope, sessionId, signal)
+          await retrieveBrowser(scope, sessionId, signal),
+          signal
         );
       }
       case "update": {
         const sessionId = requireSessionId(input.session_id);
         await requireOwnedBrowserSession(scope, sessionId);
-        const viewport = browserViewport(input);
-        const browser = viewport
-          ? await kernel.browsers.update(sessionId, { viewport }, { signal })
-          : await retrieveBrowser(scope, sessionId, signal);
-        return lifecycleResult(browser);
+        browserViewport(input);
+        return lifecycleResult(
+          await browserDescriptor(
+            await retrieveBrowser(scope, sessionId, signal),
+            signal
+          )
+        );
       }
       case "delete": {
         const sessionId = requireSessionId(input.session_id);
@@ -175,12 +217,11 @@ const manageBrowsers = defineTool({
           { createdAt: record.createdAt, sessionId: record.sessionId },
           signal
         );
-        await disposeBrowserLoopSession(sessionId);
-        await kernel.browsers
-          .deleteByID(sessionId, { signal })
-          .catch((cause: unknown) => {
+        await releaseBrowserbaseSession(sessionId, signal).catch(
+          (cause: unknown) => {
             if (!isNotFoundError(cause)) throw cause;
-          });
+          }
+        );
         await deleteBrowserSession(scope, sessionId);
         return "Browser session deleted successfully";
       }
@@ -202,10 +243,16 @@ async function retrieveBrowser(
   signal?: AbortSignal
 ) {
   try {
-    return await kernel.browsers.retrieve(sessionId, {}, { signal });
+    const browser = await browserbase.sessions.retrieve(sessionId, { signal });
+    if (!isActiveBrowserbaseStatus(browser.status)) {
+      await deleteBrowserSession(scope, sessionId);
+      throw new Error(
+        "Browser session no longer exists. Its stale record was removed; create a fresh browser instead of retrying this session ID."
+      );
+    }
+    return browser;
   } catch (error) {
     if (!isNotFoundError(error)) throw error;
-    await disposeBrowserLoopSession(sessionId);
     await deleteBrowserSession(scope, sessionId);
     throw new Error(
       "Browser session no longer exists. Its stale record was removed; create a fresh browser instead of retrying this session ID.",
@@ -228,72 +275,140 @@ function browserViewport(input: z.infer<typeof inputSchema>) {
   return { height, width };
 }
 
-type KernelBrowser =
-  | BrowserCreateResponse
-  | BrowserRetrieveResponse
-  | BrowserUpdateResponse;
-
-function browserDescriptor(browser: KernelBrowser) {
+async function browserDescriptor(
+  browser: Session | SessionRetrieveResponse,
+  signal?: AbortSignal
+) {
+  const active = isActiveBrowserbaseStatus(browser.status);
+  const liveView = active
+    ? await browserbase.sessions.debug(browser.id, { signal })
+    : undefined;
+  const viewport = active
+    ? await withBrowserbasePage(browser.id, signal, async ({ page }) =>
+        page.viewportSize()
+      ).catch(() => undefined)
+    : undefined;
   return {
-    browser_live_view_url: browser.browser_live_view_url,
-    session_id: browser.session_id,
-    status: browser.deleted_at ? "deleted" : "active",
-    viewport: browser.viewport ?? undefined,
+    browser_live_view_url:
+      liveView?.debuggerFullscreenUrl ??
+      `https://browserbase.com/sessions/${browser.id}`,
+    session_id: browser.id,
+    status: active ? ("active" as const) : ("deleted" as const),
+    viewport: viewport ?? undefined,
   };
 }
 
-function lifecycleResult(browser: KernelBrowser) {
-  const value = browserDescriptor(browser);
+function lifecycleResult(value: Awaited<ReturnType<typeof browserDescriptor>>) {
   return {
     browser: value,
     next_actions: [
-      `Use playwright_execute with session_id "${value.session_id}" as the primary surface for deterministic inspection and interaction, including related safe actions, extraction, JavaScript, loops, and pagination.`,
+      `Use playwright_execute with session_id "${value.session_id}" as the primary surface for deterministic selector-based inspection and interaction, including related safe actions and compact reads.`,
       `If Playwright is unreliable or semantic interaction is more suitable, call browser_snapshot with session_id "${value.session_id}" to mint current refs; use browser_find or browser_text to narrow large pages.`,
-      `Then use browser_act with session_id "${value.session_id}" as a relaxed fallback for short ref-based click, fill, and submit plans; inspect its successor state instead of waiting on per-action postconditions.`,
+      `Then use browser_act with session_id "${value.session_id}" as a relaxed fallback for short ref-based click, fill, and submit plans; inspect its successor state.`,
       `Use computer_action with session_id "${value.session_id}" only when visual reasoning or coordinate control is necessary.`,
       `Use manage_browsers with action "delete" and session_id "${value.session_id}" when finished.`,
     ],
   };
 }
 
-export function kernelProfileNameForWorkspace(workspaceId: string) {
-  return `openinstinct-${createHash("sha256")
-    .update(`kernel-profile\0${workspaceId}`)
+export function browserbaseContextKeyForWorkspace(workspaceId: string) {
+  return createHash("sha256")
+    .update(`browserbase-context\0${workspaceId}`)
     .digest("hex")
-    .slice(0, 40)}`;
+    .slice(0, 40);
 }
 
-async function ensureWorkspaceProfile(
+async function ensureWorkspaceContext(
   workspaceId: string,
   signal?: AbortSignal
 ) {
-  const name = kernelProfileNameForWorkspace(workspaceId);
+  const existing = workspaceContextPromises.get(workspaceId);
+  if (existing) return existing;
+  const pending = discoverOrCreateWorkspaceContext(workspaceId, signal);
+  workspaceContextPromises.set(workspaceId, pending);
   try {
-    return await kernel.profiles.retrieve(name, { signal });
+    return await pending;
   } catch (error) {
-    if (!(error instanceof NotFoundError)) throw error;
-  }
-
-  try {
-    return await kernel.profiles.create({ name }, { signal });
-  } catch (error) {
-    if (!(error instanceof ConflictError)) throw error;
-    return kernel.profiles.retrieve(name, { signal });
+    if (workspaceContextPromises.get(workspaceId) === pending) {
+      workspaceContextPromises.delete(workspaceId);
+    }
+    throw error;
   }
 }
 
-async function findActiveProfileWriter(
-  profileId: string | undefined,
-  signal: AbortSignal | undefined
+async function discoverOrCreateWorkspaceContext(
+  workspaceId: string,
+  signal?: AbortSignal
 ) {
-  if (!profileId) return undefined;
-  for await (const browser of kernel.browsers.list(
-    { query: profileId, status: "active" },
+  const key = browserbaseContextKeyForWorkspace(workspaceId);
+  const matchingSessions = await browserbase.sessions.list(
+    { q: `user_metadata['openinstinctContext']:'${key}'` },
     { signal }
-  )) {
-    if (browser.profile?.id === profileId && browser.profile_save_changes) {
-      return browser;
-    }
-  }
-  return undefined;
+  );
+  const priorContextIds = matchingSessions
+    .filter(
+      (session): session is typeof session & { contextId: string } =>
+        session.contextId !== undefined
+    )
+    .toSorted((left, right) => right.createdAt.localeCompare(left.createdAt))
+    .map((session) => session.contextId);
+  const availableContextIds = await Promise.all(
+    priorContextIds.map(async (contextId) => {
+      try {
+        await browserbase.contexts.retrieve(contextId, { signal });
+        return contextId;
+      } catch (error) {
+        if (!isNotFoundError(error)) throw error;
+        return undefined;
+      }
+    })
+  );
+  const priorContextId = availableContextIds.find(
+    (contextId) => contextId !== undefined
+  );
+  if (priorContextId) return priorContextId;
+
+  const created = await browserbase.contexts.create(
+    { projectId: browserbaseProjectId },
+    { signal }
+  );
+  return created.id;
+}
+
+async function findActiveContextWriter(
+  scope: Awaited<ReturnType<typeof requireWorkerScope>>,
+  signal?: AbortSignal
+) {
+  const records = await listBrowserSessions(scope);
+  const browsers = await Promise.all(
+    records.map(async (record) => {
+      try {
+        return await browserbase.sessions.retrieve(record.sessionId, {
+          signal,
+        });
+      } catch (error) {
+        if (!isNotFoundError(error)) throw error;
+        return undefined;
+      }
+    })
+  );
+  return browsers.find(
+    (browser) =>
+      browser !== undefined &&
+      isActiveBrowserbaseStatus(browser.status) &&
+      browser.userMetadata?.openinstinctProfileWriter === "true"
+  );
+}
+
+async function releaseBrowserbaseSession(
+  sessionId: string,
+  signal?: AbortSignal
+) {
+  const browser = await browserbase.sessions.retrieve(sessionId, { signal });
+  if (!isActiveBrowserbaseStatus(browser.status)) return browser;
+  return browserbase.sessions.update(
+    sessionId,
+    { projectId: browserbaseProjectId, status: "REQUEST_RELEASE" },
+    { signal }
+  );
 }

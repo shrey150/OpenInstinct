@@ -5,7 +5,7 @@ const requiredEnvironment = {
   BETTER_AUTH_URL: "https://example.com",
   BLOB_READ_WRITE_TOKEN: "vercel_blob_rw_test",
   DATABASE_URL: "postgresql://user:password@example.com/database",
-  KERNEL_API_KEY: "test-kernel-key",
+  BROWSERBASE_API_KEY: "test-browserbase-key",
   SECRET_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64"),
 };
 
@@ -102,7 +102,7 @@ describe("environment", () => {
     expect(env.SECRET_ENCRYPTION_KEY).toBeUndefined();
   });
 
-  it.each(["DATABASE_URL", "KERNEL_API_KEY"])(
+  it.each(["DATABASE_URL", "BROWSERBASE_API_KEY"])(
     "keeps %s required in local development",
     async (name) => {
       vi.stubEnv(name, "");
@@ -127,7 +127,7 @@ describe("environment", () => {
 
   it.each([
     ["DATABASE_URL", "Invalid environment variables"],
-    ["KERNEL_API_KEY", "Invalid environment variables"],
+    ["BROWSERBASE_API_KEY", "Invalid environment variables"],
   ])(
     "rejects a missing required %s value during import",
     async (name, errorMessage) => {

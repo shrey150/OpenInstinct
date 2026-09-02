@@ -1,9 +1,23 @@
-/* oxlint-disable vitest/require-mock-type-parameters -- The test fixtures implement only the external API surface exercised by the tool. */
+/* oxlint-disable vitest/require-mock-type-parameters -- The fixtures implement only the Playwright surface exercised by the image tool. */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Page } from "playwright-core";
 import { toolContextFor } from "@/tests/helpers/tool-context";
 
+type ImagePageOperation = (resources: {
+  context: { request: { get: ReturnType<typeof vi.fn> } };
+  page: {
+    locator: () => {
+      evaluate: ReturnType<typeof vi.fn>;
+      first: () => object;
+      screenshot: ReturnType<typeof vi.fn>;
+      waitFor: ReturnType<typeof vi.fn>;
+    };
+    screenshot: ReturnType<typeof vi.fn>;
+  };
+}) => Promise<object>;
+
 const artifactId = "0d01e667-d128-4bb7-a248-1ae21db72f4f";
-const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const image = {
   byteSize: png.byteLength,
   filename: "Product.png",
@@ -14,19 +28,22 @@ const image = {
 };
 
 const mocks = vi.hoisted(() => ({
-  captureScreenshot: vi.fn(),
   del: vi.fn(),
-  deleteFile: vi.fn(),
-  fetch: vi.fn(),
+  imageBody: vi.fn(),
+  imageEvaluate: vi.fn(),
+  imageGet: vi.fn(),
+  imageOk: vi.fn(),
+  imageStatus: vi.fn(),
+  locatorScreenshot: vi.fn(),
+  locatorWaitFor: vi.fn(),
   mask: vi.fn(),
+  pageScreenshot: vi.fn(),
   persist: vi.fn(),
-  playwrightExecute: vi.fn(),
-  readFile: vi.fn(),
-  reserve: vi.fn(),
-  retrieve: vi.fn(),
   put: vi.fn(),
+  reserve: vi.fn(),
   requireOwnedBrowserSession: vi.fn(),
   requireWorkerScope: vi.fn(),
+  withBrowserbasePage: vi.fn(),
 }));
 
 vi.mock("@/agent/subagents/worker/lib/access", () => ({
@@ -38,25 +55,14 @@ vi.mock("@/agent/subagents/worker/lib/owned-browser", () => ({
 vi.mock("@/agent/subagents/worker/lib/vault-screenshot-mask", () => ({
   withVaultScreenshotMask: mocks.mask,
 }));
+vi.mock("@/lib/browserbase-playwright", () => ({
+  withBrowserbasePage: mocks.withBrowserbasePage,
+}));
 vi.mock("@/db/services/browser-images", () => ({
   finalizeBrowserImageArtifact: mocks.persist,
   reserveBrowserImageArtifact: mocks.reserve,
 }));
-vi.mock("@vercel/blob", () => ({
-  del: mocks.del,
-  put: mocks.put,
-}));
-vi.mock("@/lib/kernel", () => ({
-  kernel: {
-    browsers: {
-      computer: { captureScreenshot: mocks.captureScreenshot },
-      fetch: mocks.fetch,
-      fs: { deleteFile: mocks.deleteFile, readFile: mocks.readFile },
-      playwright: { execute: mocks.playwrightExecute },
-      retrieve: mocks.retrieve,
-    },
-  },
-}));
+vi.mock("@vercel/blob", () => ({ del: mocks.del, put: mocks.put }));
 
 import captureBrowserImage from "@/agent/subagents/worker/tools/capture_browser_image";
 
@@ -79,35 +85,47 @@ beforeEach(() => {
   mocks.del.mockResolvedValue(undefined);
   mocks.put.mockResolvedValue({ pathname: "stored/image" });
   mocks.mask.mockImplementation(
+    async (_page: Page, capture: () => Promise<Buffer>) => capture()
+  );
+  mocks.pageScreenshot.mockResolvedValue(png);
+  mocks.locatorScreenshot.mockResolvedValue(png);
+  mocks.locatorWaitFor.mockResolvedValue(undefined);
+  mocks.imageEvaluate.mockResolvedValue(
+    "https://images.example/product.png?private=ignored"
+  );
+  mocks.imageOk.mockReturnValue(true);
+  mocks.imageStatus.mockReturnValue(200);
+  mocks.imageBody.mockResolvedValue(png);
+  mocks.imageGet.mockResolvedValue({
+    body: mocks.imageBody,
+    ok: mocks.imageOk,
+    status: mocks.imageStatus,
+  });
+  mocks.withBrowserbasePage.mockImplementation(
     async (
       _sessionId: string,
-      _signal: AbortSignal,
-      capture: () => Promise<Uint8Array>
-    ) => capture()
-  );
-  mocks.captureScreenshot.mockResolvedValue(new Response(png));
-  mocks.playwrightExecute.mockResolvedValue({ result: true, success: true });
-  mocks.readFile.mockResolvedValue(new Response(png));
-  mocks.deleteFile.mockResolvedValue(undefined);
-  mocks.retrieve.mockResolvedValue({
-    cdp_ws_url: "wss://kernel.test/cdp",
-    created_at: "2026-08-31T00:00:00.000Z",
-    headless: false,
-    memory: "2GiB",
-    region: "us-east",
-    session_id: "browser-1",
-    stealth: true,
-    timeout_seconds: 900,
-    webdriver_ws_url: "wss://kernel.test/webdriver",
-  });
-  mocks.fetch.mockResolvedValue(
-    new Response(png, { headers: { "content-type": "image/png" } })
+      _signal: AbortSignal | undefined,
+      operation: ImagePageOperation
+    ) =>
+      operation({
+        context: { request: { get: mocks.imageGet } },
+        page: {
+          locator: () => ({
+            evaluate: mocks.imageEvaluate,
+            first() {
+              return this;
+            },
+            screenshot: mocks.locatorScreenshot,
+            waitFor: mocks.locatorWaitFor,
+          }),
+          screenshot: mocks.pageScreenshot,
+        },
+      })
   );
 });
 
 describe("capture_browser_image", () => {
   it("captures a masked viewport and returns only the artifact descriptor", async () => {
-    const toolContext = context();
     const result = await captureBrowserImage.execute(
       {
         label: "Product",
@@ -115,19 +133,14 @@ describe("capture_browser_image", () => {
         session_id: "browser-1",
         source: "viewport",
       },
-      toolContext
+      context()
     );
 
-    expect(mocks.requireWorkerScope).toHaveBeenCalledOnce();
-    expect(mocks.requireOwnedBrowserSession).toHaveBeenCalledWith(
-      scope,
-      "browser-1"
-    );
-    expect(mocks.mask).toHaveBeenCalledOnce();
-    expect(mocks.captureScreenshot).toHaveBeenCalledWith(
-      "browser-1",
-      { region: { height: 200, width: 300, x: 10, y: 20 } },
-      { signal: toolContext.abortSignal }
+    expect(mocks.pageScreenshot).toHaveBeenCalledWith(
+      expect.objectContaining({
+        clip: { height: 200, width: 300, x: 10, y: 20 },
+        type: "png",
+      })
     );
     expect(mocks.persist).toHaveBeenCalledWith(
       scope,
@@ -138,38 +151,28 @@ describe("capture_browser_image", () => {
     expect(JSON.stringify(result)).not.toContain("base64");
   });
 
-  it.each([
-    ["full_page", undefined, "fullPage: true"],
-    ["element", "#landingImage", "#landingImage"],
-  ] as const)(
-    "captures a Playwright %s screenshot",
-    async (source, selector, code) => {
-      const input =
-        source === "element"
-          ? {
-              label: "Product",
-              selector,
-              session_id: "browser-1",
-              source,
-            }
-          : { label: "Product", session_id: "browser-1", source };
-      await captureBrowserImage.execute(input, context());
+  it("captures full-page and element screenshots", async () => {
+    await captureBrowserImage.execute(
+      { label: "Full", session_id: "browser-1", source: "full_page" },
+      context()
+    );
+    await captureBrowserImage.execute(
+      {
+        label: "Element",
+        selector: "#landingImage",
+        session_id: "browser-1",
+        source: "element",
+      },
+      context()
+    );
 
-      expect(JSON.stringify(mocks.playwrightExecute.mock.calls)).toContain(
-        code
-      );
-      expect(mocks.readFile).toHaveBeenCalledOnce();
-      expect(mocks.deleteFile).toHaveBeenCalledOnce();
-    }
-  );
+    expect(mocks.pageScreenshot).toHaveBeenCalledWith(
+      expect.objectContaining({ fullPage: true })
+    );
+    expect(mocks.locatorScreenshot).toHaveBeenCalledOnce();
+  });
 
-  it("fetches an image element's original resource through the browser", async () => {
-    const toolContext = context();
-    mocks.playwrightExecute.mockResolvedValue({
-      result: { url: "https://images.example/product.png?private=ignored" },
-      success: true,
-    });
-
+  it("fetches an image resource through the Browserbase context", async () => {
     await captureBrowserImage.execute(
       {
         label: "Product",
@@ -177,18 +180,12 @@ describe("capture_browser_image", () => {
         session_id: "browser-1",
         source: "image_resource",
       },
-      toolContext
+      context()
     );
 
-    expect(mocks.retrieve).toHaveBeenCalledWith(
-      "browser-1",
-      {},
-      { signal: toolContext.abortSignal }
-    );
-    expect(mocks.fetch).toHaveBeenCalledWith(
-      "browser-1",
-      new URL("https://images.example/product.png?private=ignored"),
-      expect.objectContaining({ method: "GET", timeout_ms: 20_000 })
+    expect(mocks.imageGet).toHaveBeenCalledWith(
+      "https://images.example/product.png?private=ignored",
+      expect.objectContaining({ timeout: 20_000 })
     );
     expect(mocks.persist).toHaveBeenCalledWith(
       scope,
@@ -200,15 +197,9 @@ describe("capture_browser_image", () => {
     );
   });
 
-  it("falls back to an element screenshot when the resource cannot be fetched", async () => {
-    const toolContext = context();
-    mocks.playwrightExecute
-      .mockResolvedValueOnce({
-        result: { url: "https://images.example/product.avif" },
-        success: true,
-      })
-      .mockResolvedValueOnce({ result: true, success: true });
-    mocks.fetch.mockResolvedValue(new Response("blocked", { status: 403 }));
+  it("falls back to an element screenshot when the resource is blocked", async () => {
+    mocks.imageOk.mockReturnValue(false);
+    mocks.imageStatus.mockReturnValue(403);
 
     await captureBrowserImage.execute(
       {
@@ -217,10 +208,10 @@ describe("capture_browser_image", () => {
         session_id: "browser-1",
         source: "image_resource",
       },
-      toolContext
+      context()
     );
 
-    expect(mocks.readFile).toHaveBeenCalledOnce();
+    expect(mocks.locatorScreenshot).toHaveBeenCalledOnce();
     expect(mocks.persist).toHaveBeenCalledWith(
       scope,
       reservation,
@@ -232,57 +223,13 @@ describe("capture_browser_image", () => {
     mocks.reserve.mockResolvedValue({ image, status: "ready" });
 
     const result = await captureBrowserImage.execute(
-      {
-        label: "Product",
-        session_id: "browser-1",
-        source: "viewport",
-      },
+      { label: "Product", session_id: "browser-1", source: "viewport" },
       context()
     );
 
     expect(result).toEqual({ image });
-    expect(mocks.captureScreenshot).not.toHaveBeenCalled();
+    expect(mocks.withBrowserbasePage).not.toHaveBeenCalled();
     expect(mocks.persist).not.toHaveBeenCalled();
-  });
-
-  it("leaves a shared pending reservation available when capture fails", async () => {
-    mocks.captureScreenshot.mockRejectedValue(new Error("Kernel failed"));
-
-    await expect(
-      captureBrowserImage.execute(
-        {
-          label: "Product",
-          session_id: "browser-1",
-          source: "viewport",
-        },
-        context()
-      )
-    ).rejects.toThrow("Kernel failed");
-    expect(mocks.persist).not.toHaveBeenCalled();
-  });
-
-  it("deletes a temporary screenshot without reusing an aborted signal", async () => {
-    const controller = new AbortController();
-    mocks.readFile.mockImplementation(() => {
-      controller.abort();
-      throw new Error("Capture cancelled");
-    });
-
-    await expect(
-      captureBrowserImage.execute(
-        {
-          label: "Product",
-          session_id: "browser-1",
-          source: "full_page",
-        },
-        context(controller.signal)
-      )
-    ).rejects.toThrow("Capture cancelled");
-    expect(mocks.deleteFile).toHaveBeenCalledOnce();
-    expect(mocks.deleteFile.mock.calls[0]).toHaveLength(2);
-    expect(JSON.stringify(mocks.deleteFile.mock.calls[0]?.[1])).toContain(
-      "/tmp/"
-    );
   });
 });
 

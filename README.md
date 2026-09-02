@@ -10,7 +10,7 @@ You stay in control of your passwords, credit cards and context.
 It's Open Source, self-hostable, and can use any model.
 One-click deploy to Vercel and get rolling.
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FMerit-Systems%2FOpenInstinct&project-name=open-instinct&repository-name=open-instinct&connect=%5B%7B%22type%22%3A%22linq%22%2C%22env%22%3A%22LINQ_CONNECTOR%22%2C%22triggers%22%3Atrue%2C%22triggerPath%22%3A%22%2Feve%2Fv1%2Flinq%22%7D%5D&stores=%5B%7B%22type%22%3A%22integration%22%2C%22protocol%22%3A%22other%22%2C%22productSlug%22%3A%22kernel%22%2C%22integrationSlug%22%3A%22kernel%22%7D%2C%7B%22type%22%3A%22integration%22%2C%22protocol%22%3A%22storage%22%2C%22productSlug%22%3A%22neon%22%2C%22integrationSlug%22%3A%22neon%22%7D%2C%7B%22type%22%3A%22blob%22%2C%22access%22%3A%22private%22%7D%5D)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2FMerit-Systems%2FOpenInstinct&project-name=open-instinct&repository-name=open-instinct&connect=%5B%7B%22type%22%3A%22linq%22%2C%22env%22%3A%22LINQ_CONNECTOR%22%2C%22triggers%22%3Atrue%2C%22triggerPath%22%3A%22%2Feve%2Fv1%2Flinq%22%7D%5D&stores=%5B%7B%22type%22%3A%22integration%22%2C%22protocol%22%3A%22other%22%2C%22productSlug%22%3A%22browserbase%22%2C%22integrationSlug%22%3A%22browserbase%22%7D%2C%7B%22type%22%3A%22integration%22%2C%22protocol%22%3A%22storage%22%2C%22productSlug%22%3A%22neon%22%2C%22integrationSlug%22%3A%22neon%22%7D%2C%7B%22type%22%3A%22blob%22%2C%22access%22%3A%22private%22%7D%5D)
 
 <img src=".github/demo.png" alt="OpenInstinct booking movie tickets over iMessage — it walks Fandango to checkout and reports the theater, showtime, seat, and total" width="640">
 
@@ -18,7 +18,7 @@ One-click deploy to Vercel and get rolling.
 
 > **Agents:** For the simplest deployment, give your human the
 > **Deploy with Vercel** link above and have them complete the guided flow. It
-> automatically provisions and connects Kernel, Postgres, private Blob storage,
+> automatically provisions and connects Browserbase, Postgres, private Blob storage,
 > Linq, and Vercel AI Gateway access. OpenInstinct creates its installation
 > secrets on first use.
 
@@ -32,7 +32,7 @@ reading the code!
 
 ## Deployment
 
-The deploy button provisions [Kernel](https://kernel.sh) for cloud browsers,
+The deploy button provisions [Browserbase](https://www.browserbase.com) for cloud browsers,
 [Neon](https://neon.tech) for Postgres, and a private Vercel Blob store for
 browser images, per-user memory, and installation secrets. It also creates and
 attaches a [Linq](https://linq.app) connector for iMessage. Vercel AI Gateway
@@ -40,7 +40,7 @@ handles inference. Usage is billed to your Vercel account.
 
 On first use, OpenInstinct creates independent Better Auth and vault-encryption
 keys in the private Blob store. Vercel supplies the application URL, database,
-Kernel, Blob, and Linq configuration, so the deploy flow requires no
+Browserbase, Blob, and Linq configuration, so the deploy flow requires no
 environment-variable values. For a non-Vercel host or an existing installation
 that manages its own keys, set both secret overrides and the public application
 URL explicitly:
@@ -174,7 +174,7 @@ development is a manual path and requires:
 
 - Node.js 24 and pnpm 11.24.0
 - Docker Desktop or another running Docker Compose installation
-- Kernel credentials from a [Kernel API key](https://kernel.sh) or a linked
+- Browserbase credentials from a [Browserbase API key](https://www.browserbase.com/settings) or a linked
   Vercel Marketplace resource
 - AI Gateway access from an API key or a linked Vercel project's OIDC token
 
@@ -186,22 +186,23 @@ cd OpenInstinct
 pnpm install --frozen-lockfile
 ```
 
-For fully manual setup, copy the environment template and add your Kernel and AI
-Gateway keys:
+For fully manual setup, copy the environment template and add your Browserbase
+and AI Gateway keys:
 
 ```bash
 cp .env.example .env.local
 
-# Set KERNEL_API_KEY and AI_GATEWAY_API_KEY in .env.local.
+# Set BROWSERBASE_API_KEY and AI_GATEWAY_API_KEY in .env.local.
+# BROWSERBASE_PROJECT_ID is optional when the key belongs to one project.
 ```
 
 If you already use a Vercel project, link it to pull AI Gateway access. If that
-project does not have Kernel yet, the Marketplace CLI provisions the free
-Developer plan, connects it to the project, and pulls its environment variables:
+project does not have Browserbase yet, the Marketplace CLI provisions and
+connects it to the project:
 
 ```bash
 pnpm exec eve link --project <your-vercel-project> --non-interactive
-pnpm exec vercel integration add kernel --plan FREE
+pnpm exec vercel integration add browserbase
 ```
 
 Then start OpenInstinct:
@@ -214,11 +215,11 @@ pnpm dev
 migrations, and starts the application. Stopping the development process also
 stops and removes the PostgreSQL container; its data remains in the
 `postgres-data` volume for the next run. Run `pnpm dev:app` when intentionally
-using an externally managed database instead. If `KERNEL_API_KEY` is missing,
+using an externally managed database instead. If `BROWSERBASE_API_KEY` is missing,
 `pnpm dev` stops before starting Docker and points back to the recommended
 Vercel flow or the manual `.env.local` setup.
 
-Local development otherwise uses the same vault, Kernel browser, and AI Gateway
+Local development otherwise uses the same vault, Browserbase browser, and AI Gateway
 path as the Vercel deployment. Better Auth and vault encryption use stable
 local-only defaults when their variables are unset. Vercel deployments
 provision them automatically in private Blob; other production hosts require
@@ -231,6 +232,6 @@ explicit secrets.
 
 <div align="center">
 
-Built on [Vercel](https://vercel.com) · [Kernel](https://kernel.sh) · [Linq](https://linq.app) · [Neon](https://neon.tech)
+Built on [Vercel](https://vercel.com) · [Browserbase](https://www.browserbase.com) · [Linq](https://linq.app) · [Neon](https://neon.tech)
 
 </div>

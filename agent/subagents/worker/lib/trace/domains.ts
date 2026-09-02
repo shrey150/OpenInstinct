@@ -1,6 +1,7 @@
 import { recordBrowserTraceDomains } from "@/db/services/browser-traces";
+import { z } from "zod";
 import type { AccessScope } from "@/lib/access-scope";
-import { kernel } from "@/lib/kernel";
+import { browserbase } from "@/lib/browserbase";
 
 const maximumTelemetryEvents = 5000;
 
@@ -19,19 +20,36 @@ async function collectNavigationDomains(
   signal?: AbortSignal
 ) {
   const domains = new Set<string>();
-  let seen = 0;
-  for await (const { event } of kernel.browsers.telemetry.events(
-    browser.sessionId,
-    { category: ["page"], limit: 1000, since: browser.createdAt },
-    { signal }
-  )) {
-    if (seen >= maximumTelemetryEvents) break;
-    seen += 1;
-    if (event.type !== "page_navigation") continue;
-    const data = event.data;
-    if (!data?.url || data.parent_frame_id) continue;
-    if (data.target_type && data.target_type !== "page") continue;
-    const domain = domainFromUrl(data.url);
+  const logs = await browserbase.sessions.logs.list(browser.sessionId, {
+    signal,
+  });
+  for (const entry of logs.slice(-maximumTelemetryEvents)) {
+    if (
+      entry.method !== "Page.frameNavigated" &&
+      entry.method !== "Page.navigatedWithinDocument"
+    ) {
+      continue;
+    }
+    const params = entry.request?.params;
+    const parsed = z
+      .object({
+        frame: z
+          .object({ parentId: z.string().optional(), url: z.string() })
+          .optional(),
+        url: z.string().optional(),
+      })
+      .safeParse(params);
+    if (!parsed.success || parsed.data.frame?.parentId) continue;
+    const domain = domainFromUrl(
+      parsed.data.frame?.url ?? parsed.data.url ?? ""
+    );
+    if (domain) domains.add(domain);
+  }
+  const live = await browserbase.sessions
+    .debug(browser.sessionId, { signal })
+    .catch(() => undefined);
+  for (const page of live?.pages ?? []) {
+    const domain = domainFromUrl(page.url);
     if (domain) domains.add(domain);
   }
   return domains;

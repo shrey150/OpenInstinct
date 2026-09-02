@@ -64,21 +64,23 @@ describe("local development", () => {
     expectIsolatedLifecycle(result.commands);
   });
 
-  it("rejects a missing Kernel key before starting Docker", async () => {
-    const result = await runWithoutKernelApiKey();
+  it("rejects a missing Browserbase key before starting Docker", async () => {
+    const result = await runWithoutBrowserbaseApiKey();
 
     expect(result.code).toBe(1);
     expect(result.commands).toBe("");
     expect(result.stderr).toContain(
-      "KERNEL_API_KEY is required for manual local development."
+      "BROWSERBASE_API_KEY is required for manual local development."
     );
     expect(result.stderr).toContain(
-      "Deploy with Vercel button in README.md; its Kernel Marketplace integration supplies the credentials automatically."
+      "Deploy with Vercel button in README.md; its Browserbase Marketplace integration supplies the credentials automatically."
     );
     expect(result.stderr).toContain(
-      "pnpm exec vercel integration add kernel --plan FREE"
+      "pnpm exec vercel integration add browserbase"
     );
-    expect(result.stderr).toContain("create a key at https://kernel.sh");
+    expect(result.stderr).toContain(
+      "create a key at https://www.browserbase.com/settings"
+    );
   });
 
   it("does not advance when interrupted startup exits cleanly", async () => {
@@ -183,7 +185,7 @@ printf 'pnpm %s\\n' "$*" >> "$DEV_SUPERVISOR_LOG"
     {
       env: {
         DEV_SUPERVISOR_LOG: logPath,
-        KERNEL_API_KEY: "test-kernel-key",
+        BROWSERBASE_API_KEY: "test-browserbase-key",
         NODE_ENV: "test",
         PATH: directory,
         ...environment,
@@ -241,7 +243,7 @@ printf 'pnpm %s %s\n' "$*" "$DATABASE_URL" >> "$DEV_SUPERVISOR_LOG"
     {
       env: {
         DEV_SUPERVISOR_LOG: logPath,
-        KERNEL_API_KEY: "test-kernel-key",
+        BROWSERBASE_API_KEY: "test-browserbase-key",
         NODE_ENV: "test",
         PATH: directory,
       },
@@ -259,7 +261,7 @@ printf 'pnpm %s %s\n' "$*" "$DATABASE_URL" >> "$DEV_SUPERVISOR_LOG"
   };
 }
 
-async function runWithoutKernelApiKey() {
+async function runWithoutBrowserbaseApiKey() {
   const directory = await mkdtemp(join(tmpdir(), "open-instinct-dev-"));
   temporaryDirectories.push(directory);
   const logPath = join(directory, "commands.log");
