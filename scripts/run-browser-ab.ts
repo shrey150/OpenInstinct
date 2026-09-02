@@ -8,7 +8,8 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { createServer } from "node:net";
+import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import nextEnvironment from "@next/env";
@@ -22,6 +23,7 @@ import {
 
 const { loadEnvConfig } = nextEnvironment;
 const nodeErrorSchema = z.object({ code: z.string() });
+const tcpAddressSchema = z.object({ port: z.number().int().positive() });
 const errorMessageSchema = z.preprocess(
   (value) => (value instanceof Error ? value.message : String(value)),
   z.string()
@@ -54,9 +56,23 @@ try {
     resolveCommit(options.baselineRef),
     resolveCommit(options.candidateRef),
   ]);
+  const [baselinePort, candidatePort] = await Promise.all([
+    availablePort(),
+    availablePort(),
+  ]);
   const variants = [
-    variant("baseline", baselineSha, options.baselineBrowserProvider),
-    variant("candidate", candidateSha, options.candidateBrowserProvider),
+    variant(
+      "baseline",
+      baselineSha,
+      options.baselineBrowserProvider,
+      baselinePort
+    ),
+    variant(
+      "candidate",
+      candidateSha,
+      options.candidateBrowserProvider,
+      candidatePort
+    ),
   ] as const;
   await archivePreviousLiveStatus();
   await writeBrowserBenchmarkLiveStatus(
@@ -215,7 +231,8 @@ try {
 function variant(
   kind: "baseline" | "candidate",
   sha: string,
-  browserProvider: "browserbase" | "kernel" | undefined
+  browserProvider: "browserbase" | "kernel" | undefined,
+  port: number
 ) {
   const suffix = `${shortSha(sha)}-${String(process.pid)}`;
   const name = `eve-browser-${kind}-${suffix}`;
@@ -225,8 +242,9 @@ function variant(
     kind,
     name,
     path: join(temporaryRoot, kind),
+    port,
     sha,
-    url: `https://${name}.localhost`,
+    url: `http://127.0.0.1:${String(port)}`,
   };
 }
 
@@ -304,16 +322,14 @@ async function startAgent(current: ReturnType<typeof variant>) {
     ...databaseEnvironment(current.databaseUrl, current.browserProvider),
     BETTER_AUTH_URL: current.url,
     EVE_DEV: "1",
+    HOST: "127.0.0.1",
     NODE_ENV: "development",
+    PORT: String(current.port),
   };
-  const child = start(
-    "portless",
-    ["--name", current.name, "node_modules/eve/bin/eve.js", "dev", "--no-ui"],
-    {
-      cwd: current.path,
-      env: environment,
-    }
-  );
+  const child = start("node_modules/eve/bin/eve.js", ["dev", "--no-ui"], {
+    cwd: current.path,
+    env: environment,
+  });
   processes.push(child);
   await waitForUrl(`${current.url}/eve/v1/health`, child);
 }
@@ -337,9 +353,6 @@ async function runBenchmark(current: ReturnType<typeof variant>) {
     BROWSER_BENCH_STATUS_PATH: liveStatusPath,
     BROWSER_BENCH_SUITE: options.suite,
     BROWSER_BENCH_VARIANT: current.kind,
-    NODE_EXTRA_CA_CERTS:
-      inheritedEnvironment.NODE_EXTRA_CA_CERTS ??
-      join(homedir(), ".portless", "ca.pem"),
     NODE_ENV: "development",
   };
   if (current.browserProvider) {
@@ -694,4 +707,24 @@ function hash(value: string) {
 
 function delay(milliseconds: number) {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
+}
+
+async function availablePort() {
+  return new Promise<number>((resolvePort, rejectPort) => {
+    const server = createServer();
+    server.unref();
+    server.once("error", rejectPort);
+    server.listen(0, "127.0.0.1", () => {
+      const address = tcpAddressSchema.safeParse(server.address());
+      if (!address.success) {
+        server.close();
+        rejectPort(new Error("Could not reserve a loopback port."));
+        return;
+      }
+      server.close((error) => {
+        if (error) rejectPort(error);
+        else resolvePort(address.data.port);
+      });
+    });
+  });
 }
