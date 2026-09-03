@@ -179,8 +179,16 @@ async function dispatchWorker(t: EveEvalContext, prompt: string) {
   ].join("\n\n");
   let session: Pick<EveEvalSession, "send"> = t;
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    // oxlint-disable-next-line eslint/no-await-in-loop -- a fresh coordinator session is a bounded recovery for a completed turn that skipped delegation
-    const turn = await session.send(coordinatorPrompt);
+    let turn: EveEvalTurn;
+    try {
+      // oxlint-disable-next-line eslint/no-await-in-loop -- a fresh coordinator session is a bounded recovery for a failed turn or skipped delegation
+      turn = await session.send(coordinatorPrompt);
+    } catch (error) {
+      if (attempt > 0) throw error;
+      t.log("Coordinator turn failed before dispatch; retrying once.");
+      session = t.newSession();
+      continue;
+    }
     const childSessionId = workerSessionId(turn);
     if (childSessionId) {
       turn.calledSubagent("worker", { count: 1 });
