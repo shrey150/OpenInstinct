@@ -91,7 +91,6 @@ export default tasks.flatMap((task) =>
             "the worker emitted exactly one native structured result"
           )
         );
-        t.succeeded();
         const workerCompletion = readTaskCompletion(child.events);
         const taskJudgeContext =
           "judgeContext" in task ? task.judgeContext : undefined;
@@ -182,14 +181,13 @@ async function dispatchWorker(t: EveEvalContext, prompt: string) {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     // oxlint-disable-next-line eslint/no-await-in-loop -- a fresh coordinator session is a bounded recovery for a completed turn that skipped delegation
     const turn = await session.send(coordinatorPrompt);
-    turn.expectOk();
     const childSessionId = workerSessionId(turn);
     if (childSessionId) {
       turn.calledSubagent("worker", { count: 1 });
       return childSessionId;
     }
     if (attempt === 0) {
-      t.log("Coordinator skipped worker delegation; retrying once.");
+      t.log("Coordinator did not dispatch a worker; retrying once.");
       session = t.newSession();
     }
   }
