@@ -1,4 +1,10 @@
-import { defineEval, type EveEvalLiveTurn, type EveEvalTurn } from "eve/evals";
+import {
+  defineEval,
+  type EveEvalContext,
+  type EveEvalLiveTurn,
+  type EveEvalSession,
+  type EveEvalTurn,
+} from "eve/evals";
 import { satisfies } from "eve/evals/expect";
 import { reportBrowserBenchmarkActivity } from "@/evals/browser/benchmark-reporter";
 import {
@@ -25,10 +31,7 @@ export default tasks.flatMap((task) =>
       description,
       tags: ["browser", "benchmark"],
       async test(t) {
-        const started = await t.send(task.prompt);
-        started.expectOk();
-        started.calledSubagent("worker", { count: 1 });
-        const childSessionId = requireWorkerSessionId(started);
+        const childSessionId = await dispatchWorker(t, task.prompt);
         let child = t.target.watchTurn(childSessionId, { startIndex: 0 });
         let turnStartIndex = 0;
         let completed: EveEvalTurn | null = null;
@@ -88,7 +91,6 @@ export default tasks.flatMap((task) =>
             "the worker emitted exactly one native structured result"
           )
         );
-        t.succeeded();
         const workerCompletion = readTaskCompletion(child.events);
         const taskJudgeContext =
           "judgeContext" in task ? task.judgeContext : undefined;
@@ -169,11 +171,42 @@ function isIdleStreamClosure(cause: unknown) {
   );
 }
 
-function requireWorkerSessionId(turn: EveEvalTurn) {
+async function dispatchWorker(t: EveEvalContext, prompt: string) {
+  const coordinatorPrompt = [
+    "Delegate exactly one worker subagent to complete this browser task. Wait for the worker and deliver its result. Do not attempt the browser task yourself.",
+    "Browser task:",
+    prompt,
+  ].join("\n\n");
+  let session: Pick<EveEvalSession, "send"> = t;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    let turn: EveEvalTurn;
+    try {
+      // oxlint-disable-next-line eslint/no-await-in-loop -- a fresh coordinator session is a bounded recovery for a failed turn or skipped delegation
+      turn = await session.send(coordinatorPrompt);
+    } catch (error) {
+      if (attempt > 0) throw error;
+      t.log("Coordinator turn failed before dispatch; retrying once.");
+      session = t.newSession();
+      continue;
+    }
+    const childSessionId = workerSessionId(turn);
+    if (childSessionId) {
+      turn.calledSubagent("worker", { count: 1 });
+      return childSessionId;
+    }
+    if (attempt === 0) {
+      t.log("Coordinator did not dispatch a worker; retrying once.");
+      session = t.newSession();
+    }
+  }
+  throw new Error("Worker child session was not recorded after one retry.");
+}
+
+function workerSessionId(turn: EveEvalTurn) {
   for (const event of turn.events) {
     if (event.type === "subagent.called" && event.data.name === "worker") {
       return event.data.childSessionId;
     }
   }
-  throw new Error("Worker child session was not recorded.");
+  return undefined;
 }

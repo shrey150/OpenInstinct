@@ -12,11 +12,13 @@ import type { requireWorkerScope } from "@/agent/subagents/worker/lib/access";
 import type { requireOwnedBrowserSession } from "@/agent/subagents/worker/lib/owned-browser";
 import type * as TraceDomainsModule from "@/agent/subagents/worker/lib/trace/domains";
 import type { harvestBrowserTraceDomains } from "@/agent/subagents/worker/lib/trace/domains";
-import { kernel } from "@/lib/kernel";
+import { getKernel } from "@/lib/kernel";
 import { toolContextFor } from "@/tests/helpers/tool-context";
 import manageBrowsers, {
   kernelProfileNameForWorkspace,
-} from "@/agent/subagents/worker/tools/manage_browsers";
+} from "@/agent/subagents/worker/browser-providers/kernel/manage-browsers";
+
+const kernel = getKernel();
 
 const serviceMocks = vi.hoisted(() => ({
   createBrowserSession: vi.fn<typeof createBrowserSession>(),

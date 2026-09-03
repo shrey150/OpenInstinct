@@ -16,6 +16,7 @@ minimumReleaseAgeExclude:
   - systeminformation
 allowBuilds:
   "@google/genai": false
+  bufferutil: false
   cbor-extract: false
   esbuild: true
   protobufjs: false

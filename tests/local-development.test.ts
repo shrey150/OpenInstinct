@@ -65,12 +65,12 @@ describe("local development", () => {
   });
 
   it("rejects a missing Kernel key before starting Docker", async () => {
-    const result = await runWithoutKernelApiKey();
+    const result = await runWithoutBrowserProviderApiKey();
 
     expect(result.code).toBe(1);
     expect(result.commands).toBe("");
     expect(result.stderr).toContain(
-      "KERNEL_API_KEY is required for manual local development."
+      "KERNEL_API_KEY is required for manual local development when BROWSER_PROVIDER=kernel."
     );
     expect(result.stderr).toContain(
       "Deploy with Vercel button in README.md; its Kernel Marketplace integration supplies the credentials automatically."
@@ -79,6 +79,22 @@ describe("local development", () => {
       "pnpm exec vercel integration add kernel --plan FREE"
     );
     expect(result.stderr).toContain("create a key at https://kernel.sh");
+  });
+
+  it("rejects a missing Browserbase key before starting Docker", async () => {
+    const result = await runWithoutBrowserProviderApiKey("browserbase");
+
+    expect(result.code).toBe(1);
+    expect(result.commands).toBe("");
+    expect(result.stderr).toContain(
+      "BROWSERBASE_API_KEY is required for manual local development when BROWSER_PROVIDER=browserbase."
+    );
+    expect(result.stderr).toContain(
+      "pnpm exec vercel integration add browserbase"
+    );
+    expect(result.stderr).toContain(
+      "create a key at https://www.browserbase.com/settings"
+    );
   });
 
   it("does not advance when interrupted startup exits cleanly", async () => {
@@ -259,7 +275,9 @@ printf 'pnpm %s %s\n' "$*" "$DATABASE_URL" >> "$DEV_SUPERVISOR_LOG"
   };
 }
 
-async function runWithoutKernelApiKey() {
+async function runWithoutBrowserProviderApiKey(
+  provider: "browserbase" | "kernel" = "kernel"
+) {
   const directory = await mkdtemp(join(tmpdir(), "open-instinct-dev-"));
   temporaryDirectories.push(directory);
   const logPath = join(directory, "commands.log");
@@ -277,6 +295,7 @@ printf '%s\n' "$*" >> "$DEV_SUPERVISOR_LOG"
     [new URL("../scripts/dev.ts", import.meta.url).pathname],
     {
       env: {
+        BROWSER_PROVIDER: provider,
         DEV_SUPERVISOR_LOG: logPath,
         NODE_ENV: "test",
         PATH: directory,

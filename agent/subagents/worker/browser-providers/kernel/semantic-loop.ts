@@ -5,7 +5,7 @@ import {
   type LoopToolSpec,
 } from "@onkernel/browser-loop";
 import { defineState } from "eve/context";
-import { kernel } from "@/lib/kernel";
+import { getKernel } from "@/lib/kernel";
 
 /* oxlint-disable anti-slop/no-unsafe-dictionary-type -- Browser Loop's materialized vendor tool accepts arbitrary JSON input by contract. */
 
@@ -63,6 +63,7 @@ async function resourcesFor(sessionId: string, signal?: AbortSignal) {
   const cached = resourcesBySession.get(sessionId);
   if (cached) return cached;
 
+  const kernel = getKernel();
   const browser = await kernel.browsers.retrieve(sessionId, {}, { signal });
 
   type Options = ConstructorParameters<typeof LoopExecutionResources>[0];

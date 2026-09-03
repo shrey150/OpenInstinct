@@ -1,21 +1,34 @@
-import { kernel } from "@/lib/kernel";
+import type { Page } from "playwright-core";
+import { getKernel } from "@/lib/kernel";
 
-export async function withVaultScreenshotMask<T>(
+export async function withBrowserbaseVaultScreenshotMask<T>(
+  page: Page,
+  capture: () => Promise<T>
+) {
+  await setVaultScreenshotMask(page, "add");
+  try {
+    return await capture();
+  } finally {
+    await setVaultScreenshotMask(page, "remove").catch(() => undefined);
+  }
+}
+
+export async function withKernelVaultScreenshotMask<T>(
   sessionId: string,
   signal: AbortSignal | undefined,
   capture: () => Promise<T>
 ) {
-  await setVaultScreenshotMask(sessionId, "add", signal);
+  await setKernelVaultScreenshotMask(sessionId, "add", signal);
   try {
     return await capture();
   } finally {
-    await setVaultScreenshotMask(sessionId, "remove", undefined).catch(
+    await setKernelVaultScreenshotMask(sessionId, "remove", undefined).catch(
       () => undefined
     );
   }
 }
 
-async function setVaultScreenshotMask(
+async function setKernelVaultScreenshotMask(
   sessionId: string,
   action: "add" | "remove",
   signal?: AbortSignal
@@ -57,7 +70,7 @@ for (const currentContext of browser.contexts()) {
   }
 }
 return true;`;
-  const result = await kernel.browsers.playwright.execute(
+  const result = await getKernel().browsers.playwright.execute(
     sessionId,
     { code, timeout_sec: 10 },
     { signal }
@@ -69,4 +82,54 @@ return true;`;
         : "Vault screenshot masking could not be removed."
     );
   }
+}
+
+async function setVaultScreenshotMask(page: Page, action: "add" | "remove") {
+  const styleId = "vault-screenshot-mask";
+  const selector = '[data-vault-secret="true"]';
+  const frames = page.frames();
+  await Promise.all(
+    frames.map((frame) =>
+      frame
+        .evaluate(
+          ({ action: operation, selector: vaultSelector, styleId: id }) => {
+            const existing = document.getElementById(id);
+            if (operation === "add") {
+              if (existing) {
+                const refs = Number.parseInt(
+                  existing.dataset.vaultMaskRefs ?? "0",
+                  10
+                );
+                existing.dataset.vaultMaskRefs = String(
+                  (Number.isFinite(refs) ? refs : 0) + 1
+                );
+                return;
+              }
+              const style = document.createElement("style");
+              style.id = id;
+              style.dataset.vaultMaskRefs = "1";
+              style.textContent = `${vaultSelector} { color: transparent !important; text-shadow: 0 0 8px black !important; -webkit-text-security: disc !important; }`;
+              document.documentElement.append(style);
+              return;
+            }
+            if (!existing) return;
+            const refs = Number.parseInt(
+              existing.dataset.vaultMaskRefs ?? "1",
+              10
+            );
+            const remaining = Math.max(
+              0,
+              (Number.isFinite(refs) ? refs : 1) - 1
+            );
+            if (remaining > 0) {
+              existing.dataset.vaultMaskRefs = String(remaining);
+            } else {
+              existing.remove();
+            }
+          },
+          { action, selector, styleId }
+        )
+        .catch(() => undefined)
+    )
+  );
 }

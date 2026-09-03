@@ -7,6 +7,8 @@ const applicationEnvironment = [
   "BLOB_*",
   "DATABASE_URL",
   "*_CONNECTOR_UID",
+  "BROWSER_PROVIDER",
+  "BROWSERBASE_*",
   "KERNEL_*",
   "LINQ_*",
   "NODE_ENV",

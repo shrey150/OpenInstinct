@@ -1,6 +1,7 @@
-import Kernel from "@onkernel/sdk";
 import { z } from "zod";
-import { env } from "@/env";
+import { browserProvider } from "@/lib/browser-provider";
+import { getBrowserbase } from "@/lib/browserbase";
+import { getKernel } from "@/lib/kernel";
 import type { AutofillClaim } from "./protocol";
 import {
   classifyNativeLoginControl,
@@ -116,17 +117,21 @@ export const nativeAutofillTokens = {
 
 type NativeAutofillKind = "address" | "contact" | "login" | "payment";
 
-export async function currentKernelPageOrigin({
+export async function currentBrowserPageOrigin({
   browserSessionId,
   signal,
 }: {
   readonly browserSessionId: string;
   readonly signal?: AbortSignal;
 }) {
-  return withKernelPage(browserSessionId, signal, async ({ origin }) => origin);
+  return withBrowserPage(
+    browserSessionId,
+    signal,
+    async ({ origin }) => origin
+  );
 }
 
-export async function fillWithKernelNativeAutofill({
+export async function fillWithNativeAutofill({
   browserSessionId,
   claims,
   expectedOrigin,
@@ -142,7 +147,7 @@ export async function fillWithKernelNativeAutofill({
   const payload =
     kind === "login" ? undefined : buildNativeAutofillPayload(kind, claims);
 
-  return withKernelPage(
+  return withBrowserPage(
     browserSessionId,
     signal,
     async ({ connection, origin, sessionId }) => {
@@ -529,7 +534,28 @@ async function markNativeAutofilledControls(
   }
 }
 
-async function withKernelPage<T>(
+async function browserCdpUrl(
+  browserSessionId: string,
+  signal: AbortSignal | undefined
+) {
+  if (browserProvider === "browserbase") {
+    const browser = await getBrowserbase().sessions.retrieve(browserSessionId, {
+      signal,
+    });
+    if (!browser.connectUrl) {
+      throw new Error("The Browserbase session is no longer connectable.");
+    }
+    return browser.connectUrl;
+  }
+  const browser = await getKernel().browsers.retrieve(
+    browserSessionId,
+    {},
+    { signal }
+  );
+  return browser.cdp_ws_url;
+}
+
+async function withBrowserPage<T>(
   browserSessionId: string,
   signal: AbortSignal | undefined,
   operation: (page: {
@@ -538,10 +564,8 @@ async function withKernelPage<T>(
     readonly sessionId: readonly string[];
   }) => Promise<T>
 ) {
-  const browser = await new Kernel({
-    apiKey: env.KERNEL_API_KEY,
-  }).browsers.retrieve(browserSessionId, {}, { signal });
-  const connection = await CdpConnection.connect(browser.cdp_ws_url, signal);
+  const cdpUrl = await browserCdpUrl(browserSessionId, signal);
+  const connection = await CdpConnection.connect(cdpUrl, signal);
 
   try {
     const { targetInfos } = targetListSchema.parse(
@@ -621,7 +645,7 @@ class CdpConnection {
       this.#onMessage(event);
     });
     socket.addEventListener("close", () => {
-      this.#rejectPending(new Error("The Kernel CDP connection closed."));
+      this.#rejectPending(new Error("The browser CDP connection closed."));
     });
     signal?.addEventListener(
       "abort",
@@ -646,7 +670,7 @@ class CdpConnection {
       };
       const onError = () => {
         cleanup();
-        reject(new Error("Could not connect to the Kernel browser over CDP."));
+        reject(new Error("Could not connect to the browser over CDP."));
       };
       const onAbort = () => {
         cleanup();

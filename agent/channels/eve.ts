@@ -5,7 +5,8 @@ import {
   UnauthenticatedError,
 } from "eve/channels/auth";
 import { z } from "zod";
-import { isSessionOwned } from "@/db/services/sessions";
+import { claimSession, isSessionOwned } from "@/db/services/sessions";
+import { ensureScope } from "@/db/services/scope";
 import { accessScopeForUser, type AccessScope } from "@/lib/access-scope";
 import { getAuthSession } from "@/auth/session";
 import { sendMessageToolResultSchema } from "@/agent/lib/send-message";
@@ -16,6 +17,11 @@ import {
 } from "@/agent/lib/schedules/report-lifecycle";
 
 const authenticateLocalDev = localDev();
+/* oxlint-disable eslint/no-restricted-properties, turbo/no-undeclared-env-vars -- this isolated benchmark opt-in must work across revisions with different application env schemas */
+const benchmarkSessionAutoclaimEnabled =
+  process.env.NODE_ENV === "development" &&
+  process.env.BROWSER_BENCH_AUTOCLAIM_SESSIONS === "1";
+/* oxlint-enable eslint/no-restricted-properties, turbo/no-undeclared-env-vars */
 
 export default eveChannel({
   auth: [
@@ -46,8 +52,13 @@ export default eveChannel({
 
       const scope = accessScopeForUser("better-auth:browser-benchmark");
       const sessionId = sessionIdFromPath(new URL(request.url).pathname);
-      if (sessionId && !(await waitForSessionOwnership(scope, sessionId))) {
-        throw new ForbiddenError({ message: "Session not found." });
+      if (sessionId) {
+        if (benchmarkSessionAutoclaimEnabled) {
+          await ensureScope(scope);
+          await claimSession(scope, sessionId);
+        } else if (!(await waitForSessionOwnership(scope, sessionId))) {
+          throw new ForbiddenError({ message: "Session not found." });
+        }
       }
 
       return {
@@ -125,7 +136,7 @@ async function requestIdentityFromRequest(request: Request) {
 
 async function waitForSessionOwnership(scope: AccessScope, sessionId: string) {
   /* oxlint-disable eslint/no-await-in-loop -- Ownership visibility is checked by a bounded sequential retry loop. */
-  for (let attempt = 0; attempt < 50; attempt += 1) {
+  for (let attempt = 0; attempt < 300; attempt += 1) {
     if (await isSessionOwned(scope, sessionId)) return true;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }

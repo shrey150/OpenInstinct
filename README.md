@@ -38,6 +38,22 @@ browser images, per-user memory, and installation secrets. It also creates and
 attaches a [Linq](https://linq.app) connector for iMessage. Vercel AI Gateway
 handles inference. Usage is billed to your Vercel account.
 
+### Browser provider
+
+Kernel remains the default, so existing deployments do not need a configuration
+change. Browserbase is available as an opt-in provider with the same worker tool
+surface. To attach it to an existing Vercel project through the Marketplace, run:
+
+```bash
+vc i browserbase
+```
+
+Then set `BROWSER_PROVIDER=browserbase` for the deployment. The Marketplace
+resource supplies the Browserbase credentials. For manual or non-Vercel setup,
+set `BROWSERBASE_API_KEY`; set `BROWSERBASE_PROJECT_ID` when the API key can
+access more than one project. Change `BROWSER_PROVIDER` back to `kernel` to use
+the existing `KERNEL_API_KEY` path again.
+
 On first use, OpenInstinct creates independent Better Auth and vault-encryption
 keys in the private Blob store. Vercel supplies the application URL, database,
 Kernel, Blob, and Linq configuration, so the deploy flow requires no
@@ -176,6 +192,9 @@ development is a manual path and requires:
 - Docker Desktop or another running Docker Compose installation
 - Kernel credentials from a [Kernel API key](https://kernel.sh) or a linked
   Vercel Marketplace resource
+- Optionally, Browserbase credentials from the
+  [Browserbase Vercel Marketplace integration](https://vercel.com/marketplace/browserbase)
+  or a [Browserbase API key](https://www.browserbase.com/settings)
 - AI Gateway access from an API key or a linked Vercel project's OIDC token
 
 First clone and install the application:
@@ -186,13 +205,16 @@ cd OpenInstinct
 pnpm install --frozen-lockfile
 ```
 
-For fully manual setup, copy the environment template and add your Kernel and AI
-Gateway keys:
+For fully manual setup, copy the environment template and add your selected
+browser provider and AI Gateway keys:
 
 ```bash
 cp .env.example .env.local
 
-# Set KERNEL_API_KEY and AI_GATEWAY_API_KEY in .env.local.
+# Kernel (default): set KERNEL_API_KEY and AI_GATEWAY_API_KEY.
+# Browserbase: set BROWSER_PROVIDER=browserbase, BROWSERBASE_API_KEY,
+# and AI_GATEWAY_API_KEY. BROWSERBASE_PROJECT_ID is optional for a
+# single-project API key.
 ```
 
 If you already use a Vercel project, link it to pull AI Gateway access. If that
@@ -214,12 +236,12 @@ pnpm dev
 migrations, and starts the application. Stopping the development process also
 stops and removes the PostgreSQL container; its data remains in the
 `postgres-data` volume for the next run. Run `pnpm dev:app` when intentionally
-using an externally managed database instead. If `KERNEL_API_KEY` is missing,
-`pnpm dev` stops before starting Docker and points back to the recommended
-Vercel flow or the manual `.env.local` setup.
+using an externally managed database instead. If the API key for the selected
+browser provider is missing, `pnpm dev` stops before starting Docker and points
+back to the recommended Vercel flow or the manual `.env.local` setup.
 
-Local development otherwise uses the same vault, Kernel browser, and AI Gateway
-path as the Vercel deployment. Better Auth and vault encryption use stable
+Local development otherwise uses the same vault, selected cloud browser, and AI
+Gateway path as the Vercel deployment. Better Auth and vault encryption use stable
 local-only defaults when their variables are unset. Vercel deployments
 provision them automatically in private Blob; other production hosts require
 explicit secrets.
@@ -231,6 +253,6 @@ explicit secrets.
 
 <div align="center">
 
-Built on [Vercel](https://vercel.com) · [Kernel](https://kernel.sh) · [Linq](https://linq.app) · [Neon](https://neon.tech)
+Built on [Vercel](https://vercel.com) · [Kernel](https://kernel.sh) / [Browserbase](https://www.browserbase.com) · [Linq](https://linq.app) · [Neon](https://neon.tech)
 
 </div>
