@@ -125,7 +125,7 @@ async function requestIdentityFromRequest(request: Request) {
 
 async function waitForSessionOwnership(scope: AccessScope, sessionId: string) {
   /* oxlint-disable eslint/no-await-in-loop -- Ownership visibility is checked by a bounded sequential retry loop. */
-  for (let attempt = 0; attempt < 50; attempt += 1) {
+  for (let attempt = 0; attempt < 300; attempt += 1) {
     if (await isSessionOwned(scope, sessionId)) return true;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }

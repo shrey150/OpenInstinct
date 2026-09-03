@@ -41,6 +41,7 @@ const processes: ChildProcess[] = [];
 const composeProjects: { cwd: string; name: string }[] = [];
 let keepResources = options.keep;
 let liveStatusInitialized = false;
+let cleanupPromise: Promise<void> | undefined;
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
   process.once(signal, () => {
@@ -568,18 +569,14 @@ async function resolveCommit(reference: string) {
   ).trim();
 }
 
-async function cleanup() {
-  if (keepResources) return;
-  for (const child of processes.toReversed()) {
-    if (child.pid && child.exitCode === null) {
-      try {
-        process.kill(-child.pid, "SIGTERM");
-      } catch (error) {
-        const parsed = nodeErrorSchema.safeParse(error);
-        if (!parsed.success || parsed.data.code !== "ESRCH") throw error;
-      }
-    }
-  }
+function cleanup() {
+  if (keepResources) return Promise.resolve();
+  cleanupPromise ??= performCleanup();
+  return cleanupPromise;
+}
+
+async function performCleanup() {
+  await Promise.all(processes.toReversed().map(stopProcess));
   for (const project of composeProjects.toReversed()) {
     // oxlint-disable-next-line eslint/no-await-in-loop -- teardown is deliberately ordered to avoid interleaved Docker cleanup
     await run(
@@ -596,6 +593,33 @@ async function cleanup() {
     }).catch(() => undefined);
   }
   await rm(temporaryRoot, { force: true, recursive: true });
+}
+
+async function stopProcess(child: ChildProcess) {
+  if (!child.pid || child.exitCode !== null || child.signalCode !== null)
+    return;
+  const exited = new Promise<void>((resolveExit) => {
+    child.once("exit", () => {
+      resolveExit();
+    });
+  });
+  signalProcessGroup(child.pid, "SIGTERM");
+  const exitedGracefully = await Promise.race([
+    exited.then(() => true),
+    delay(5_000).then(() => false),
+  ]);
+  if (exitedGracefully) return;
+  signalProcessGroup(child.pid, "SIGKILL");
+  await exited;
+}
+
+function signalProcessGroup(pid: number, signal: NodeJS.Signals) {
+  try {
+    process.kill(-pid, signal);
+  } catch (error) {
+    const parsed = nodeErrorSchema.safeParse(error);
+    if (!parsed.success || parsed.data.code !== "ESRCH") throw error;
+  }
 }
 
 function parseArguments(args: string[]) {
