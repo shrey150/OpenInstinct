@@ -347,6 +347,8 @@ async function runBenchmark(current: ReturnType<typeof variant>) {
     .join("-");
   const artifact = join(outputDirectory, `${current.kind}.json`);
   const environment: NodeJS.ProcessEnv = {
+    DATABASE_URL: current.databaseUrl,
+    DATABASE_URL_UNPOOLED: current.databaseUrl,
     BROWSER_BENCH_ARTIFACT_PATH: artifact,
     BROWSER_BENCH_LABEL: label,
     BROWSER_BENCH_RUN_ID: timestamp,
