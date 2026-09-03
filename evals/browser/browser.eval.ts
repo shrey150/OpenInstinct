@@ -11,13 +11,9 @@ import {
   browserBenchmarkTasks,
 } from "@/evals/browser/tasks";
 import { browserBenchmarkEnv } from "@/evals/browser/env";
-import { claimSession } from "@/db/services/sessions";
-import { ensureScope } from "@/db/services/scope";
-import { accessScopeForUser } from "@/lib/access-scope";
 
 const repetitions = browserBenchmarkEnv.BROWSER_BENCH_REPETITIONS;
 const tasks = browserBenchmarkTasks(browserBenchmarkEnv.BROWSER_BENCH_SUITE);
-const benchmarkScope = accessScopeForUser("better-auth:browser-benchmark");
 
 export default tasks.flatMap((task) =>
   Array.from({ length: repetitions }, (_, repetitionIndex) => {
@@ -33,8 +29,6 @@ export default tasks.flatMap((task) =>
         started.expectOk();
         started.calledSubagent("worker", { count: 1 });
         const childSessionId = requireWorkerSessionId(started);
-        await ensureScope(benchmarkScope);
-        await claimSession(benchmarkScope, childSessionId);
         let child = t.target.watchTurn(childSessionId, { startIndex: 0 });
         let turnStartIndex = 0;
         let completed: EveEvalTurn | null = null;
