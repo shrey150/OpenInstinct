@@ -626,7 +626,7 @@ function parseArguments(args: string[]) {
   const positional: string[] = [];
   let suite: "all" | "live" | "smoke" = "smoke";
   let repetitions = 1;
-  let maxConcurrency = 9;
+  let maxConcurrency = 2;
   let taskTimeoutMs = 15 * 60_000;
   let keep = false;
   let label: string | undefined;

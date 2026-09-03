@@ -70,7 +70,7 @@ The run index keeps completed and interrupted comparisons available, with a
 table view for each run's task-level results.
 
 The A/B runner checks out two revisions into temporary worktrees, starts an
-isolated database and Portless Eve server for each, runs both revisions
+isolated database and loopback Eve server for each, runs both revisions
 concurrently against the same task array, compares the artifacts, then cleans
 up. Each isolated database is seeded with the same synthetic contact and
 address records in the existing encrypted vault so routine checkout forms do
@@ -84,17 +84,18 @@ To isolate browser-provider behavior on the exact same revision, pass that
 revision twice and set both provider arms explicitly:
 
 ```sh
-pnpm bench:ab HEAD HEAD --baseline-browser-provider kernel --candidate-browser-provider browserbase --suite live --repetitions 5 --max-concurrency 5 --label "Kernel vs Browserbase"
+pnpm bench:ab HEAD HEAD --baseline-browser-provider kernel --candidate-browser-provider browserbase --suite live --repetitions 5 --max-concurrency 2 --label "Kernel vs Browserbase"
 ```
 
 Provider overrides must be supplied for both arms or neither arm. Each server
 receives its provider override independently; task definitions, model settings,
 database fixtures, and application code remain identical.
 
-Runs default to nine concurrent tasks per revision, so an A/B suite can execute
-up to 18 tasks at once. Real flows default to a 15-minute per-task timeout. Use
-`--task-timeout-minutes <n>` to change that budget, `--repetitions 3` for a less
-noisy speed decision, `--max-concurrency <n>` to override parallelism, and
-`--keep` to leave both Portless instances and worktrees running for inspection.
-`--label "…"` records a short note in the run list and detail view. Combined
-artifacts land under `.eve/browser-ab/<timestamp>/`.
+Runs default to two concurrent tasks per revision, leaving headroom when a task
+briefly overlaps browser lifecycles and for the local Eve workflow runtime. Real
+flows default to a 15-minute per-task timeout. Use `--task-timeout-minutes <n>`
+to change that budget, `--repetitions 3` for a less noisy speed decision,
+`--max-concurrency <n>` to override parallelism, and `--keep` to leave both Eve
+servers and worktrees running for inspection. `--label "…"` records a short
+note in the run list and detail view. Combined artifacts land under
+`.eve/browser-ab/<timestamp>/`.
